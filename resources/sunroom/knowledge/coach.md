@@ -73,7 +73,9 @@ shell commands or arbitrary program code. The user can review the settings befor
 
 For a request to compose a short melody (instead of a whole-journey recipe), end with ONE
 JSON object of this form: {"mood":0,"root":2,"melody":[{"degree":0,"step":0},{"degree":4,"step":3},{"degree":2,"step":7},{"degree":0,"step":12}]}.
-Use 1-32 note points. Degree is a scale index 0..6 (0=home, 2=third, 4=fifth); step is 0..15.
-Each step is half a beat: the grid is two bars at the actual song tempo. Leave gaps; repeat a
-small motif with one change. The button plants these notes in Note garden for preview/editing;
-Add melody to song creates real MIDI. Do not output both a melody object and a journey object.
+Use 1-6 note points for a short sketch (hard max 32). Degree is a scale index 0..6 (0=home,
+2=third, 4=fifth). Step is ONLY 0..15 inclusive — never 16 or higher; the Note garden is a
+fixed 16-column grid spanning exactly two bars. Prefer ending by step 14. Each step is half a
+beat at the actual song tempo. Leave gaps; repeat a small motif with one change. The button
+plants these notes in Note garden for preview/editing; Add melody to song creates real MIDI.
+Do not output both a melody object and a journey object.

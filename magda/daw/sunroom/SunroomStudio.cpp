@@ -1049,21 +1049,34 @@ void SunroomStudio::askCoach() {
                         bool melodyValid = recipe["mood"].isInt() && between("mood", 0, 3) &&
                                            recipe["root"].isInt() && between("root", 0, 11);
                         auto* notes = recipe["melody"].getArray();
-                        melodyValid =
-                            melodyValid && notes && notes->size() > 0 && notes->size() <= 32;
-                        if (melodyValid)
+                        juce::Array<juce::var> kept;
+                        if (melodyValid && notes && notes->size() > 0 && notes->size() <= 32) {
                             for (const auto& n : *notes) {
+                                if (!n.isObject() || !n["degree"].isInt() || !n["step"].isInt())
+                                    continue;
                                 const int degree = n["degree"], step = n["step"];
-                                melodyValid = melodyValid && n["degree"].isInt() &&
-                                              n["step"].isInt() && degree >= 0 && degree < 7 &&
-                                              step >= 0 && step < 16;
+                                if (degree < 0 || degree > 6 || step < 0)
+                                    continue;
+                                // Small local models sometimes count past the 16-step garden;
+                                // keep only cells that fit the two-bar grid.
+                                if (step > 15)
+                                    continue;
+                                juce::DynamicObject::Ptr point = new juce::DynamicObject;
+                                point->setProperty("degree", degree);
+                                point->setProperty("step", step);
+                                kept.add(juce::var(point.get()));
                             }
+                        }
+                        melodyValid = melodyValid && kept.size() > 0 && kept.size() <= 16;
                         if (melodyValid) {
-                            safe->recipe_ = recipe;
+                            auto cleaned = recipe;
+                            if (auto* obj = cleaned.getDynamicObject())
+                                obj->setProperty("melody", juce::var(kept));
+                            safe->recipe_ = cleaned;
                             safe->resized();
                             safe->applyRecipe_.setButtonText(
                                 "Plant AI melody / " +
-                                juce::String(noteName(static_cast<int>(recipe["root"]))));
+                                juce::String(noteName(static_cast<int>(cleaned["root"]))));
                         }
                     }
                     if (valid) {

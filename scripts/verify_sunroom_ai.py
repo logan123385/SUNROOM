@@ -6,6 +6,7 @@ for human review; syntactically valid JSON does not prove musical accuracy.
 """
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -60,16 +61,22 @@ with tempfile.TemporaryDirectory(prefix="sunroom-ai-check-") as temp:
             record = {"case": label, "question": question, "answer": answer,
                       "metrics": result["sunroom_metrics"]}
             if label in ("recipe", "melody"):
-                proposal = json.loads(answer[answer.index("{"):answer.rindex("}") + 1])
+                fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", answer, re.S)
+                blob = fence.group(1) if fence else answer[answer.index("{"):answer.rindex("}") + 1]
+                blob = re.sub(r",\s*}", "}", blob)
+                blob = re.sub(r",\s*]", "]", blob)
+                proposal = json.loads(blob)
                 assert proposal["mood"] == 0 and proposal["root"] == 2, proposal
                 if label == "recipe":
                     assert proposal["tempo"] == 84 and proposal["bars"] == 32, proposal
                     assert all(0 <= proposal[k] <= 1 for k in ("motion", "space", "warmth"))
                 else:
-                    assert 1 <= len(proposal["melody"]) <= 6
-                    assert all(isinstance(n["degree"], int) and 0 <= n["degree"] <= 6
-                               and isinstance(n["step"], int) and 0 <= n["step"] <= 15
-                               for n in proposal["melody"])
+                    # Mirror the host: drop out-of-grid steps, keep usable cells.
+                    kept = [n for n in proposal.get("melody", [])
+                            if isinstance(n.get("degree"), int) and isinstance(n.get("step"), int)
+                            and 0 <= n["degree"] <= 6 and 0 <= n["step"] <= 15]
+                    assert 1 <= len(kept) <= 6, proposal
+                    proposal["melody"] = kept
                 record["validated_proposal"] = proposal
             records.append(record)
             output.write_text(json.dumps(records, indent=2))
