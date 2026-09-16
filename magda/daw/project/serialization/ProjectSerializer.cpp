@@ -196,6 +196,8 @@ bool ProjectSerializer::loadAndStage(const juce::File& file, StagedProjectData& 
             outData.info.keyRoot = projectObj->getProperty("keyRoot");
         if (projectObj->hasProperty("keyQuality"))
             outData.info.keyQuality = projectObj->getProperty("keyQuality");
+        outData.info.sunroomMood = juce::jlimit(0, 3, static_cast<int>(projectObj->getProperty("sunroomMood")));
+        outData.info.sunroomGuide = static_cast<bool>(projectObj->getProperty("sunroomGuide"));
 
         // Named timeline markers
         outData.info.markers.clear();
@@ -379,6 +381,8 @@ juce::var ProjectSerializer::serializeProject(const ProjectInfo& info) {
     projectObj->setProperty("bounceBitDepth", info.bounceBitDepth);
     projectObj->setProperty("keyRoot", info.keyRoot);
     projectObj->setProperty("keyQuality", info.keyQuality);
+    projectObj->setProperty("sunroomMood", info.sunroomMood);
+    projectObj->setProperty("sunroomGuide", info.sunroomGuide);
 
     // Named timeline markers
     if (!info.markers.empty()) {
@@ -509,6 +513,8 @@ bool ProjectSerializer::deserializeProject(const juce::var& json, ProjectInfo& o
         outInfo.keyRoot = projectObj->getProperty("keyRoot");
     if (projectObj->hasProperty("keyQuality"))
         outInfo.keyQuality = projectObj->getProperty("keyQuality");
+    outInfo.sunroomMood = juce::jlimit(0, 3, static_cast<int>(projectObj->getProperty("sunroomMood")));
+    outInfo.sunroomGuide = static_cast<bool>(projectObj->getProperty("sunroomGuide"));
 
     // Named timeline markers
     outInfo.markers.clear();

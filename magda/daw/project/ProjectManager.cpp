@@ -4,6 +4,8 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include <algorithm>
+#include <atomic>
+#include <mutex>
 #include <unordered_set>
 
 #include "../core/AutomationManager.hpp"
@@ -25,7 +27,7 @@ static const char* const kBouncesDir = "bounces";
 static const char* const kExternalEditsDir = "external-edits";
 static const char* const kImportedDir = "imported";
 static const char* const kStemsDir = "stems";
-static const char* const kTempRootDir = "MAGDA";
+static const char* const kTempRootDir = "SUNROOM";
 static const char* const kTempPrefix = "UnsavedProject_";
 static constexpr int kStaleTempDays = 7;
 static const char* const kAutosaveExtension = ".autosave";
@@ -69,13 +71,32 @@ void resetTransportForProjectBoundary() {
 }  // namespace
 
 ProjectManager& ProjectManager::getInstance() {
-    static ProjectManager instance;
-    return instance;
+    // The manager owns a JUCE Timer. Release it during JUCE shutdown, while the
+    // message manager still exists, rather than during later C++ static teardown.
+    // Reset the slot as well so multiple scoped JUCE sessions remain supported.
+    struct Lifetime;
+    static std::atomic<Lifetime*> instance{nullptr};
+    static std::mutex creationMutex;
+    struct Lifetime final : juce::DeletedAtShutdown {
+        ProjectManager value;
+        ~Lifetime() override { instance.store(nullptr); }
+    };
+    auto* live = instance.load();
+    if (live == nullptr) {
+        std::lock_guard<std::mutex> lock(creationMutex);
+        live = instance.load();
+        if (live == nullptr) {
+            live = new Lifetime;
+            instance.store(live);
+        }
+    }
+    return live->value;
 }
 
 ProjectManager::ProjectManager() {
     // Initialize with default project info
     currentProject_.name = "Untitled";
+    currentProject_.tempo = 84.0;  // SUNROOM begins with a relaxed psychill pulse.
     currentProject_.version = MAGDA_VERSION;
 
     // Create temp media directory so recordings/renders have a home even before

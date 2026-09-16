@@ -18,6 +18,8 @@
 #include "api/track_api.hpp"
 #include "audio/AudioBridge.hpp"
 #include "core/TrackManager.hpp"
+#include "core/ClipManager.hpp"
+#include "sunroom/SunroomActions.hpp"
 #include "engine/AudioEngine.hpp"
 #include "project/ProjectInfo.hpp"
 #include "project/ProjectManager.hpp"
@@ -164,6 +166,7 @@ class CommandDispatcher {
 
     static const std::vector<CommandSpec>& commandSpecs() {
         static const std::vector<CommandSpec> specs = {
+            {"sunroom-journey", "sunroom-journey <mood 0..3> <root 0..11> <bars 8/32/64> <bpm>", &CommandDispatcher::sunroomJourney},
             {"set-tempo", "set-tempo <bpm>", &CommandDispatcher::setTempo},
             {"add-track", "add-track <audio|group|aux|chord> [name]", &CommandDispatcher::addTrack},
             {"add-internal-instrument", "add-internal-instrument <track-id> <plugin-id> [name]",
@@ -213,6 +216,25 @@ class CommandDispatcher {
     }
 
   private:
+    CommandResult sunroomJourney(const juce::StringArray& tokens, size_t& index) {
+        if (index+4 > static_cast<size_t>(tokens.size())) return fail("sunroom-journey needs mood, root, bars, bpm");
+        auto mood=parseInt(tokens[static_cast<int>(index++)]); auto root=parseInt(tokens[static_cast<int>(index++)]);
+        auto bars=parseInt(tokens[static_cast<int>(index++)]); auto tempo=parseDouble(tokens[static_cast<int>(index++)]);
+        if(!mood||!root||!bars||!tempo||*mood<0||*mood>3||*root<0||*root>11||(*bars!=8&&*bars!=32&&*bars!=64)||*tempo<40||*tempo>180)
+            return fail("Invalid SUNROOM musical settings");
+        magda::sunroom::Options o;o.mood=*mood;o.root=*root;o.bars=*bars;o.tempo=*tempo;
+        auto& tm=magda::TrackManager::getInstance();auto& cm=magda::ClipManager::getInstance();
+        const auto trackCount=tm.getTracks().size(),clipCount=cm.getClips().size();
+        magda::sunroom::CreateJourneyCommand command(o,&engine_); command.execute();
+        const auto ids=command.trackIds();const auto expectedClips=cm.getClips().size();
+        command.undo();
+        if(tm.getTracks().size()!=trackCount||cm.getClips().size()!=clipCount)return fail("SUNROOM undo invariant failed");
+        command.execute();
+        if(tm.getTracks().size()!=trackCount+ids.size()||cm.getClips().size()!=expectedClips)return fail("SUNROOM redo invariant failed");
+        for(auto id:ids)if(!tm.getTrack(id))return fail("SUNROOM redo lost a track identity");
+        std::cout<<"SUNROOM journey: "<<ids.size()<<" tracks, "<<expectedClips-clipCount<<" clips; undo/redo identity and counts verified.\n";
+        return {};
+    }
     CommandResult setTempo(const juce::StringArray& tokens, size_t& index) {
         if (index >= static_cast<size_t>(tokens.size()))
             return fail("set-tempo requires <bpm>");

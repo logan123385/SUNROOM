@@ -1,4 +1,5 @@
 #include "MainWindow.hpp"
+#include "sunroom/SunroomStudio.hpp"
 
 #include <vector>
 
@@ -205,7 +206,7 @@ class MainWindow::MainComponent::ResizeHandle : public juce::Component {
 
 // MainWindow implementation
 MainWindow::MainWindow(AudioEngine* audioEngine)
-    : DocumentWindow("MAGDA", DarkTheme::getBackgroundColour(), DocumentWindow::allButtons),
+    : DocumentWindow("SUNROOM", DarkTheme::getBackgroundColour(), DocumentWindow::allButtons),
       externalAudioEngine_(audioEngine) {
     juce::Logger::writeToLog("[MainWindow] Constructor started");
     // Use native window decorations on every platform, including Linux. Linux
@@ -506,7 +507,7 @@ juce::ApplicationCommandManager& MainWindow::getCommandManager() {
 
 void MainWindow::updateWindowTitle() {
     auto& pm = ProjectManager::getInstance();
-    juce::String title = "MAGDA";
+    juce::String title = "SUNROOM";
     if (pm.hasOpenProject()) {
         auto name = pm.getProjectName();
         if (name.isNotEmpty())
@@ -1321,9 +1322,19 @@ void MainWindow::MainComponent::setupDeviceLoadingCallback() {
                 hideLoadingMessage();
             }
         });
+    sunroom_ = std::make_unique<sunroom::SunroomStudio>(getAudioEngine());
+    addAndMakeVisible(*sunroom_);
+    sunroom_->onOpenStudio = [this] { guidedStudio_ = false; resized(); repaint(); };
+    sunroom_->onNewProject = [this] { commandManager.invokeDirectly(CommandIDs::newProject, true); };
+    sunroom_->onOpenProject = [this] { commandManager.invokeDirectly(CommandIDs::openProject, true); };
+    sunroom_->onSave = [this] { commandManager.invokeDirectly(CommandIDs::saveProject, true); };
+    sunroom_->onExport = [this] { commandManager.invokeDirectly(CommandIDs::exportAudio, true); };
+    guidedStudioButton_.onClick = [this] { guidedStudio_ = true; resized(); repaint(); };
+    addChildComponent(guidedStudioButton_);
 }
 
 MainWindow::MainComponent::~MainComponent() {
+    sunroom_.reset();
     DBG("    [5d] MainComponent::~MainComponent start");
 
     // The stem service outlives us (static singleton); drop its reference to
@@ -1470,11 +1481,22 @@ void MainWindow::MainComponent::resized() {
         toast_->toFront(false);
     }
 
+    if (sunroom_ && !guidedStudio_) bounds.removeFromTop(46);
     layoutTransportArea(bounds);
     layoutFooterArea(bounds);
     layoutBottomPanel(bounds);
     layoutSidePanels(bounds);
     layoutContentArea(bounds);
+    if (sunroom_) {
+        sunroom_->setVisible(guidedStudio_);
+        sunroom_->setBounds(getLocalBounds());
+        if (guidedStudio_) sunroom_->toFront(false);
+        guidedStudioButton_.setVisible(!guidedStudio_);
+        guidedStudioButton_.setBounds(20, 7, 224, 32);
+        guidedStudioButton_.toFront(false);
+        if (loadingOverlay_ && loadingOverlay_->isVisible()) loadingOverlay_->toFront(false);
+        if (toast_ && toast_->isVisible()) toast_->toFront(false);
+    }
 }
 
 void MainWindow::MainComponent::layoutTransportArea(juce::Rectangle<int>& bounds) {

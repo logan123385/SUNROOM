@@ -117,6 +117,8 @@ class MainWindow : public juce::DocumentWindow,
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainWindow)
 };
 
+namespace sunroom { class SunroomStudio; }
+
 class MainWindow::MainComponent : public juce::Component,
                                   public juce::DragAndDropContainer,
                                   public juce::ApplicationCommandTarget,
@@ -125,6 +127,9 @@ class MainWindow::MainComponent : public juce::Component,
                                   public TrackManagerListener,
                                   public magda::MidiLearnCoordinatorListener {
   public:
+    std::unique_ptr<sunroom::SunroomStudio> sunroom_;
+    juce::TextButton guidedStudioButton_{"SUNROOM / Guided studio"};
+    bool guidedStudio_ = true;
     MainComponent(AudioEngine* externalEngine = nullptr);
     ~MainComponent() override;
 

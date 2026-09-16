@@ -1,3 +1,5 @@
+#include "sunroom/MusicTheory.hpp"
+#include "project/ProjectManager.hpp"
 #include "PianoRollGridComponent.hpp"
 
 #include <juce_audio_formats/juce_audio_formats.h>
@@ -2058,13 +2060,21 @@ void PianoRollGridComponent::createNoteComponents() {
             continue;
         }
 
-        juce::Colour noteColour = getColourForClip(clipId);
+        const juce::Colour clipColour = getColourForClip(clipId);
+        const auto& guide = ProjectManager::getInstance().getCurrentProjectInfo();
+        const bool useGuideColour = guide.sunroomGuide && guide.keyRoot >= 0;
 
         // Create note component for each note in this clip
         for (size_t i = 0; i < clip->midiNotes.size(); i++) {
             auto visibleNote = clip->midiNotes[i];
             if (!ClipOperations::clipMidiNoteToVisibleRange(*clip, visibleNote))
                 continue;
+
+            juce::Colour noteColour = clipColour;
+            if (useGuideColour)
+                noteColour = juce::Colour(
+                    sunroom::feeling(visibleNote.noteNumber, guide.keyRoot, guide.sunroomMood)
+                        .colour);
 
             auto noteComp = std::make_unique<NoteComponent>(i, this, clipId);
 
@@ -2489,6 +2499,9 @@ void PianoRollGridComponent::updateNoteComponentBounds() {
 
         // Determine note colour based on editability and state
         juce::Colour noteColour = getColourForClip(clipId);
+        const auto& guide = ProjectManager::getInstance().getCurrentProjectInfo();
+        if (guide.sunroomGuide && guide.keyRoot >= 0)
+            noteColour = juce::Colour(sunroom::feeling(note.noteNumber, guide.keyRoot, guide.sunroomMood).colour);
 
         noteComp->setGhost(!isClipSelected(clipId));
         noteComp->updateFromNote(note, noteColour);
