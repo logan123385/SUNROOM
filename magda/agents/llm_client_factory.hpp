@@ -22,7 +22,8 @@ inline void registerLocalLLMClientProvider() {
         if (config.provider == provider::SUNROOM_LUNA)
             return std::make_unique<SunroomMlxClient>(3);
         if (config.provider == provider::LOCAL_SERVER)
-            return std::make_unique<SunroomMlxClient>(2);
+            return std::make_unique<SunroomMlxClient>(2, juce::String(config.baseUrl),
+                                                      juce::String(config.model));
         if (config.provider == provider::LLAMA_LOCAL)
             return std::make_unique<LlamaLocalClient>();
 

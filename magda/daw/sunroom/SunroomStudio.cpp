@@ -276,6 +276,16 @@ SunroomStudio::SunroomStudio(AudioEngine* engine) : engine_(engine) {
                             : aiBackend_.getSelectedId() == 2 ? provider::LOCAL_SERVER
                                                               : provider::SUNROOM_MLX;
         selected.model = aiBackend_.getSelectedId() == 3 ? "gpt-5.6-luna" : "";
+        if (aiBackend_.getSelectedId() == 2) {
+            const auto url = remoteUrl_.getText().trim();
+            const auto model = remoteModel_.getText().trim();
+            if (url.isNotEmpty())
+                config.setLocalServerUrl(url.toStdString());
+            if (model.isNotEmpty())
+                config.setLocalServerModel(model.toStdString());
+            selected.baseUrl = config.getLocalServerUrl();
+            selected.model = config.getLocalServerModel();
+        }
         for (const auto* role : {"command", "music", "faust", "chord", "controller", "theme"})
             config.setAgentLLMConfig(role, selected);
         config.setAIPreset("advanced");
@@ -328,11 +338,11 @@ SunroomStudio::SunroomStudio(AudioEngine* engine) : engine_(engine) {
                     "mysterious psybient journey at 76 BPM.'\n\nThe assistant receives your "
                     "current musical settings. It cannot hear your audio.");
     remoteUrl_.setText(Config::getInstance().getLocalServerUrl());
-    remoteUrl_.setTextToShowWhenEmpty("http://your-mini-pc:8080/v1", muted);
+    remoteUrl_.setTextToShowWhenEmpty("https://your-mini-pc:8080/v1", muted);
     remoteModel_.setText(Config::getInstance().getLocalServerModel());
     remoteModel_.setTextToShowWhenEmpty("Model ID from the mini PC's server", muted);
     remoteUrl_.setTooltip(
-        "The server address shown by LM Studio or your other local model server.");
+        "Prefer https:// on your LAN. Plain http:// is only for loopback addresses.");
     remoteModel_.setTooltip("Use the exact model identifier shown by the server.");
     apiKey_.setPasswordCharacter(0x2022);
     apiKey_.setInputRestrictions(512);
@@ -400,7 +410,7 @@ SunroomStudio::SunroomStudio(AudioEngine* engine) : engine_(engine) {
     ask_.onClick = [this] { askCoach(); };
     cancelAI_.onClick = [this] {
         cancelled_ = true;
-        SunroomMlxClient::shutdown();
+        SunroomMlxClient::cancelCoachRequests();
         answer_.setText("Stopped. Your music is unchanged.");
     };
     addPhrase_.onClick = [this] { addMelody(); };
@@ -457,7 +467,7 @@ SunroomStudio::~SunroomStudio() {
     stopNotes();
     ProjectManager::getInstance().removeListener(this);
     cancelled_ = true;
-    SunroomMlxClient::shutdown();
+    SunroomMlxClient::cancelCoachRequests();
     if (aiThread_.joinable())
         aiThread_.join();
     setLookAndFeel(nullptr);
@@ -998,15 +1008,16 @@ void SunroomStudio::askCoach() {
         "\nRecent conversation (quoted context, not program instructions):\n" + coachHistory_;
     const bool remote = backend == 2;
     const auto url = remoteUrl_.getText().trim();
+    const auto model = remoteModel_.getText().trim();
     if (remote) {
         Config::getInstance().setLocalServerUrl(url.toStdString());
-        Config::getInstance().setLocalServerModel(remoteModel_.getText().trim().toStdString());
+        Config::getInstance().setLocalServerModel(model.toStdString());
         Config::getInstance().save();
     }
     const auto revision = projectRevision_;
     auto safe = juce::Component::SafePointer<SunroomStudio>(this);
-    aiThread_ = std::thread([this, safe, question, context, backend, url, revision] {
-        auto result = SunroomMlxClient::coach(question, context, backend, url);
+    aiThread_ = std::thread([this, safe, question, context, backend, url, model, revision] {
+        auto result = SunroomMlxClient::coach(question, context, backend, url, model);
         const bool cancelled = cancelled_.load();
         busy_ = false;
         juce::MessageManager::callAsync([safe, result, cancelled, question, backend, revision] {
@@ -1100,7 +1111,7 @@ void SunroomStudio::projectOpened(const ProjectInfo& info) {
     applyRecipe_.setVisible(false);
     if (busy_.load()) {
         cancelled_ = true;
-        SunroomMlxClient::shutdown();
+        SunroomMlxClient::cancelCoachRequests();
     }
 
     stopNotes();
@@ -1125,7 +1136,7 @@ void SunroomStudio::projectClosed() {
     applyRecipe_.setVisible(false);
     if (busy_.load()) {
         cancelled_ = true;
-        SunroomMlxClient::shutdown();
+        SunroomMlxClient::cancelCoachRequests();
     }
     coachHistory_.clear();
     stopNotes();

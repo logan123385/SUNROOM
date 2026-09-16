@@ -37,6 +37,19 @@ with tempfile.TemporaryDirectory(prefix="sunroom-ai-check-") as temp:
         "--model", config["model"], "--ready-file", str(ready),
         "--parent-pid", str(os.getpid()),
     ], stdout=log, stderr=log)
+    def load_ready(path: Path) -> dict:
+        """Retry until the atomic ready file has a usable port and token."""
+        last_error = None
+        for _ in range(50):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(data.get("port"), int) and isinstance(data.get("token"), str) and data["token"]:
+                    return data
+            except (OSError, json.JSONDecodeError, TypeError, ValueError) as err:
+                last_error = err
+            time.sleep(0.05)
+        raise RuntimeError(f"MLX ready file incomplete: {last_error}")
+
     try:
         # Cold starts under memory pressure can exceed 30s before the helper is ready.
         deadline = time.monotonic() + 90
@@ -44,7 +57,7 @@ with tempfile.TemporaryDirectory(prefix="sunroom-ai-check-") as temp:
             if worker.poll() is not None or time.monotonic() > deadline:
                 raise RuntimeError("MLX helper did not start")
             time.sleep(.1)
-        endpoint = json.loads(ready.read_text())
+        endpoint = load_ready(ready)
         for label, question in questions:
             payload = json.dumps({"messages": [
                 {"role": "system", "content": guide + "\n" + context},

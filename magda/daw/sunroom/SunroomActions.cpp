@@ -1,5 +1,7 @@
 #include "SunroomActions.hpp"
 
+#include <memory>
+
 #include "core/AppPaths.hpp"
 #include "core/ClipManager.hpp"
 #include "core/TrackCommands.hpp"
@@ -72,16 +74,21 @@ void installSound(TrackId id, int layer, const Options& o) {
 }
 class AddInstrumentCommand final : public UndoableCommand {
   public:
-    AddInstrumentCommand(int layer, Options options) : layer_(layer), options_(options) {}
+    AddInstrumentCommand(int layer, Options options, std::shared_ptr<TrackId> createdId)
+        : layer_(layer), options_(options), createdId_(std::move(createdId)) {}
     void execute() override {
         auto& tm = TrackManager::getInstance();
         if (captured_) {
             tm.restoreTrack(track_);
+            if (createdId_)
+                *createdId_ = track_.id;
             return;
         }
         auto id = tm.createTrack(layers[static_cast<size_t>(layer_)].name, TrackType::Audio);
         installSound(id, layer_, options_);
         track_ = *tm.getTrack(id);
+        if (createdId_)
+            *createdId_ = track_.id;
         captured_ = true;
     }
     void undo() override {
@@ -90,23 +97,24 @@ class AddInstrumentCommand final : public UndoableCommand {
     juce::String getDescription() const override {
         return "Add " + track_.name;
     }
-    TrackId id() const {
-        return track_.id;
-    }
 
   private:
     int layer_;
     Options options_;
     TrackInfo track_;
+    std::shared_ptr<TrackId> createdId_;
     bool captured_ = false;
 };
 }  // namespace
 TrackId addInstrument(int layer, const Options& options) {
     layer = juce::jlimit(0, 6, layer);
-    auto command = std::make_unique<AddInstrumentCommand>(layer, sanitise(options));
-    auto* raw = command.get();
-    UndoManager::getInstance().executeCommand(std::move(command));
-    return raw->id();
+    // Publish the new track id through storage that outlives the command. When
+    // undo history is capped at zero, executeCommand may destroy the command
+    // before this function returns.
+    auto createdId = std::make_shared<TrackId>(0);
+    UndoManager::getInstance().executeCommand(
+        std::make_unique<AddInstrumentCommand>(layer, sanitise(options), createdId));
+    return *createdId;
 }
 CreateJourneyCommand::CreateJourneyCommand(Options options, AudioEngine* engine)
     : options_(sanitise(options)), engine_(engine) {}

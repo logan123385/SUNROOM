@@ -141,6 +141,7 @@ bool ProjectManager::newProject() {
     // Reset project state
     currentProject_ = ProjectInfo();
     currentProject_.name = "Untitled";
+    currentProject_.tempo = 84.0;  // Match constructor SUNROOM default (not DEFAULT_BPM).
     currentProject_.version = MAGDA_VERSION;
     // Seed per-project settings from the global new-project defaults.
     {

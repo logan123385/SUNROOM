@@ -8,6 +8,7 @@ if [[ ! -x "$sunroom_python" ]]; then
 fi
 sunroom_runtime="$HOME/Library/SUNROOM/runtime"
 "$sunroom_python" -m venv "$sunroom_runtime"
-"$sunroom_runtime/bin/python" -m pip install -r resources/sunroom/requirements-ai.txt
+# Install the pinned transitive set so rebuilds stay reproducible.
+"$sunroom_runtime/bin/python" -m pip install -r resources/sunroom/requirements-ai-lock.txt
 "$sunroom_runtime/bin/python" scripts/setup_sunroom_ai.py
 print "Local AI is ready. Open SUNROOM and choose This Mac / MLX."

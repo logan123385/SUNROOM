@@ -383,6 +383,15 @@ if(APPLE)
         COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${PROJECT_SOURCE_DIR}/resources/sunroom"
         "$<TARGET_BUNDLE_DIR:magda_daw_app>/Contents/Resources/Sunroom")
+else()
+    # Non-Apple packages look for Sunroom next to the executable.
+    add_custom_command(TARGET magda_daw_app POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${PROJECT_SOURCE_DIR}/resources/sunroom"
+        "$<TARGET_FILE_DIR:magda_daw_app>/Sunroom"
+        COMMENT "Copying SUNROOM resources beside the executable")
+    install(DIRECTORY "${PROJECT_SOURCE_DIR}/resources/sunroom/"
+            DESTINATION bin/Sunroom)
 endif()
 
 # Bundle the .mgd document icon into the app's Resources so Finder shows it for

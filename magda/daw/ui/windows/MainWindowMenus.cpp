@@ -942,8 +942,11 @@ void MainWindow::setupMenuCallbacks() {
     };
 
     callbacks.onCheckForUpdates = []() {
-        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, "SUNROOM updates",
-            "This is your personal SUNROOM build, based on MAGDA. Updates are built from your SUNROOM source folder. Upstream MAGDA releases do not include your guided studio, theme, or AI setup.");
+        juce::AlertWindow::showMessageBoxAsync(
+            juce::AlertWindow::InfoIcon, "About SUNROOM Updates",
+            "This is your personal SUNROOM build, based on MAGDA. Updates are built from your "
+            "SUNROOM source folder. Upstream MAGDA releases do not include your guided studio, "
+            "theme, or AI setup.");
     };
 
     callbacks.onAbout = []() { AboutDialog::show(); };

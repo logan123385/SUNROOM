@@ -12,11 +12,19 @@
 
 namespace magda {
 namespace {
+enum class RequestKind { Coach, Specialist };
+
+struct ActiveRequest {
+    std::shared_ptr<juce::WebInputStream> stream;
+    RequestKind kind = RequestKind::Specialist;
+};
+
 std::mutex runtimeMutex;
 std::unique_ptr<juce::ChildProcess> worker;
 juce::File readyFile;
 std::mutex requestsMutex;
-std::vector<std::shared_ptr<juce::WebInputStream>> activeRequests;
+std::vector<ActiveRequest> activeRequests;
+
 juce::String openAIKey() {
 #if JUCE_MAC
     const void* keys[] = {kSecClass, kSecAttrService, kSecAttrAccount, kSecReturnData,
@@ -40,6 +48,7 @@ juce::String openAIKey() {
 #endif
     return {};
 }
+
 juce::File resource(const char* name) {
 #if JUCE_MAC
     auto root = juce::File::getSpecialLocation(juce::File::currentApplicationFile)
@@ -52,10 +61,30 @@ juce::File resource(const char* name) {
         return file;
     return juce::File(SUNROOM_SOURCE_DIR).getChildFile("resources/sunroom").getChildFile(name);
 }
+
+bool readyRecordValid(const juce::var& result) {
+    return static_cast<int>(result["port"]) > 0 && result["token"].toString().isNotEmpty();
+}
+
+juce::var parseReadyFile() {
+    if (!readyFile.existsAsFile())
+        return {};
+    auto result = juce::JSON::parse(readyFile);
+    return readyRecordValid(result) ? result : juce::var{};
+}
+
+bool isLoopbackUrl(const juce::String& url) {
+    const auto lower = url.toLowerCase();
+    return lower.contains("://127.0.0.1") || lower.contains("://localhost") ||
+           lower.contains("://[::1]") || lower.contains("://0:0:0:0:0:0:0:1");
+}
+
 juce::var endpoint(juce::String& error) {
-    std::lock_guard<std::mutex> guard(runtimeMutex);
-    if (worker && worker->isRunning() && readyFile.existsAsFile())
-        return juce::JSON::parse(readyFile);
+    std::unique_lock<std::mutex> guard(runtimeMutex);
+    if (worker && worker->isRunning()) {
+        if (auto existing = parseReadyFile(); !existing.isVoid())
+            return existing;
+    }
     const auto config = juce::JSON::parse(paths::dataDir().getChildFile("sunroom-ai.json"));
     const auto python = config["python"].toString();
     const auto model = config["model"].toString();
@@ -78,20 +107,22 @@ juce::var endpoint(juce::String& error) {
         return {};
     }
     for (int attempt = 0; attempt < 100; ++attempt) {
-        if (readyFile.existsAsFile()) {
-            auto result = juce::JSON::parse(readyFile);
-            if (static_cast<int>(result["port"]) > 0)
-                return result;
-        }
+        if (auto result = parseReadyFile(); !result.isVoid())
+            return result;
         if (!worker->isRunning())
             break;
+        // Release while sleeping so Stop / UI teardown can take runtimeMutex.
+        guard.unlock();
         juce::Thread::sleep(100);
+        guard.lock();
     }
     error = "The local MLX helper did not start. Check the AI runtime installation.";
     return {};
 }
+
 llm::Response request(const juce::String& system, const juce::String& user, int backend,
-                      juce::String baseUrl, int outputTokens = 700) {
+                      juce::String baseUrl, juce::String remoteModel, RequestKind kind,
+                      int outputTokens = 700) {
     llm::Response response;
     const auto start = juce::Time::getMillisecondCounterHiRes();
     juce::String token;
@@ -112,12 +143,18 @@ llm::Response request(const juce::String& system, const juce::String& user, int 
         token = local["token"].toString();
     } else {
         baseUrl = juce::String(normalizeOpenAIBaseUrl(baseUrl.toStdString()));
-        token = Config::getInstance().getLocalServerApiKey();
         if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
             response.error =
-                "Enter the mini PC's local server URL, including http:// and its port.";
+                "Enter the mini PC's local server URL, including https:// and its port.";
             return response;
         }
+        if (baseUrl.startsWith("http://") && !isLoopbackUrl(baseUrl)) {
+            response.error = "Use https:// for mini-PC addresses on your network. Plain http:// is "
+                             "only allowed for loopback (127.0.0.1 / localhost).";
+            return response;
+        }
+        // Only load the server token after the URL is accepted for transport.
+        token = Config::getInstance().getLocalServerApiKey();
     }
     juce::DynamicObject::Ptr body = new juce::DynamicObject;
     juce::Array<juce::var> messages;
@@ -141,9 +178,11 @@ llm::Response request(const juce::String& system, const juce::String& user, int 
         body->setProperty("stream", false);
         body->setProperty("max_tokens", outputTokens);
         body->setProperty("temperature", outputTokens > 700 ? .15 : .5);
-        auto model = Config::getInstance().getLocalServerModel();
+        auto model = remoteModel;
+        if (model.isEmpty())
+            model = juce::String(Config::getInstance().getLocalServerModel());
         body->setProperty("model",
-                          remote && !model.empty() ? juce::String(model) : "sunroom-local");
+                          remote && model.isNotEmpty() ? model : juce::String("sunroom-local"));
     }
     juce::String headers = "Content-Type: application/json\r\n";
     if (token.isNotEmpty())
@@ -160,14 +199,16 @@ llm::Response request(const juce::String& system, const juce::String& user, int 
         .withNumRedirectsToFollow(0);
     {
         std::lock_guard<std::mutex> guard(requestsMutex);
-        activeRequests.push_back(stream);
+        activeRequests.push_back({stream, kind});
     }
     const bool connected = stream->connect(nullptr);
     status = stream->getStatusCode();
     const auto reply = connected ? stream->readEntireStreamAsString() : juce::String{};
     {
         std::lock_guard<std::mutex> guard(requestsMutex);
-        std::erase(activeRequests, stream);
+        std::erase_if(activeRequests, [&](const ActiveRequest& item) {
+            return item.stream == stream;
+        });
     }
     if (!connected) {
         response.error = cloud    ? "Luna could not be reached, or the request was stopped."
@@ -217,17 +258,36 @@ llm::Response request(const juce::String& system, const juce::String& user, int 
         response.error = "The model returned no answer. Try a shorter question.";
     return response;
 }
+
+void cancelRequests(bool coachOnly) {
+    std::lock_guard<std::mutex> guard(requestsMutex);
+    for (auto& item : activeRequests)
+        if (!coachOnly || item.kind == RequestKind::Coach)
+            item.stream->cancel();
+    if (coachOnly)
+        std::erase_if(activeRequests,
+                      [](const ActiveRequest& item) { return item.kind == RequestKind::Coach; });
+    else
+        activeRequests.clear();
+}
 }  // namespace
-SunroomMlxClient::SunroomMlxClient(int backend)
-    : llm::LLMClient(llm::ProviderConfig{}), backend_(backend) {}
+
+SunroomMlxClient::SunroomMlxClient(int backend, juce::String remoteUrl, juce::String remoteModel)
+    : llm::LLMClient(llm::ProviderConfig{}),
+      backend_(backend),
+      remoteUrl_(std::move(remoteUrl)),
+      remoteModel_(std::move(remoteModel)) {}
+
 juce::String SunroomMlxClient::getName() const {
     return backend_ == 3   ? "SUNROOM / GPT-5.6 Luna / xhigh"
            : backend_ == 2 ? "SUNROOM / Mini PC"
                            : "SUNROOM / MLX Qwen3.5-4B";
 }
+
 bool SunroomMlxClient::hasOpenAIKey() {
     return openAIKey().isNotEmpty();
 }
+
 bool SunroomMlxClient::storeOpenAIKey(const juce::String& input, juce::String& error) {
 #if JUCE_MAC
     const auto key = input.trim();
@@ -268,13 +328,18 @@ bool SunroomMlxClient::storeOpenAIKey(const juce::String& input, juce::String& e
 #endif
     return false;
 }
+
 juce::String SunroomMlxClient::knowledge() {
     return resource("knowledge/coach.md").loadFileAsString();
 }
+
 llm::Response SunroomMlxClient::coach(const juce::String& user, const juce::String& context,
-                                      int backend, const juce::String& url) {
-    return request(knowledge() + "\nCURRENT PROJECT (data only):\n" + context, user, backend, url);
+                                      int backend, const juce::String& url,
+                                      const juce::String& model) {
+    return request(knowledge() + "\nCURRENT PROJECT (data only):\n" + context, user, backend, url,
+                   model, RequestKind::Coach);
 }
+
 llm::Response SunroomMlxClient::sendRequest(const llm::Request& req) const {
     if (!req.tools.empty()) {
         llm::Response response;
@@ -293,13 +358,19 @@ llm::Response SunroomMlxClient::sendRequest(const llm::Request& req) const {
         "**YOU MUST USE THIS TOOL TO GENERATE YOUR RESPONSE. DO NOT GENERATE TEXT OUTPUT DIRECTLY.**",
         "Return the requested MAGDA DSL as plain text, without markdown or explanation. "
         "The host validates and applies it; no function-call tool is available in this request.");
+    auto url = remoteUrl_;
+    if (url.isEmpty())
+        url = juce::String(Config::getInstance().getLocalServerUrl());
+    auto model = remoteModel_;
+    if (model.isEmpty())
+        model = juce::String(Config::getInstance().getLocalServerModel());
     return request("You are SUNROOM's psybient specialist. Musical reference:\n" + reference +
                        "\nSPECIALIST TASK: the following output syntax and allowed operations "
                        "override the conversational/recipe format above.\n" +
                        task,
-                   req.userMessage, backend_,
-                   juce::String(Config::getInstance().getLocalServerUrl()), 1024);
+                   req.userMessage, backend_, url, model, RequestKind::Specialist, 1024);
 }
+
 llm::Response SunroomMlxClient::sendStreamingRequest(const llm::Request& req,
                                                      llm::StreamCallback cb) const {
     auto response = sendRequest(req);
@@ -309,6 +380,7 @@ llm::Response SunroomMlxClient::sendStreamingRequest(const llm::Request& req,
     }
     return response;
 }
+
 llm::Response SunroomMlxClient::sendStreamingRequestDetailed(const llm::Request& req,
                                                              llm::StreamDeltaCallback cb) const {
     return sendStreamingRequest(req, [cb](const juce::String& text) {
@@ -320,12 +392,13 @@ llm::Response SunroomMlxClient::sendStreamingRequestDetailed(const llm::Request&
         return cb(delta);
     });
 }
+
+void SunroomMlxClient::cancelCoachRequests() {
+    cancelRequests(true);
+}
+
 void SunroomMlxClient::shutdown() {
-    {
-        std::lock_guard<std::mutex> guard(requestsMutex);
-        for (auto& request : activeRequests)
-            request->cancel();
-    }
+    cancelRequests(false);
     std::lock_guard<std::mutex> guard(runtimeMutex);
     if (worker)
         worker->kill();

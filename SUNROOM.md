@@ -20,7 +20,7 @@ Open **AI companion** and choose a backend. This choice also updates the Full st
 
 - **This Mac / MLX:** Qwen3.5-4B, 4-bit weights, running on Apple Silicon. The app starts its private helper when asked, processes one local request at a time, and unloads the model after three idle minutes. It never falls back to a paid API. No AI is needed to create, play, edit or export music.
 - **GPT-5.6 Luna / extra high:** paste your own OpenAI API key into the masked field and click **Save to Keychain**. The key is stored in macOS Keychain, never in song files or the source code. Requests use `gpt-5.6-luna`, `reasoning.effort: xhigh` and `store: false`. Your OpenAI account must have access and API billing. This is separate from a ChatGPT subscription. Model access is verified only by a real request using your key. [Official model documentation](https://developers.openai.com/api/docs/models/gpt-5.6-luna).
-- **Mini PC / local server:** run an OpenAI-compatible model server on the Windows PC, then enter its LAN URL, including `/v1`. SUNROOM keeps audio on the Mac while the PC answers AI questions. A 16 GB PC's speed depends on its CPU/GPU; it does not combine its RAM or processors with the Mac's MLX runtime.
+- **Mini PC / local server:** run an OpenAI-compatible model server on the Windows PC, then enter its LAN URL, including `/v1`. Prefer `https://` on the network; plain `http://` is only allowed for loopback. SUNROOM keeps audio on the Mac while the PC answers AI questions. A 16 GB PC's speed depends on its CPU/GPU; it does not combine its RAM or processors with the Mac's MLX runtime.
 
 For the mini PC, [LM Studio's Developer tab](https://lmstudio.ai/docs/developer/core/server) can start a local server. Enable its local-network serving option, load a model suitable for that PC, and use the address and model ID shown by the server in AI companion. If the server requires a token, configure it in Full studio's AI settings. Keep this on your private network. The mini PC connection cannot be tested without its address and running server.
 
@@ -54,6 +54,7 @@ cmake -S . -B build-sunroom -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DMAGDA_FULL_VERSION=0.1.0-sunroom -DMAGDA_BUILD_TESTS=ON \
   -DMAGDA_BUILD_NATIVE_ENGINE=OFF -DMAGDA_HAVE_CLAP=ON -DMAGDA_FAUST_BACKEND=wasm
 cmake --build build-sunroom --target magda_daw_app magda_cli -j 2
+mkdir -p artifacts
 clang++ -std=c++20 -O2 -I. tests/sunroom/theory_test.cpp -o artifacts/sunroom-theory-test
 artifacts/sunroom-theory-test
 python3 tests/sunroom/test_mlx_boundary.py

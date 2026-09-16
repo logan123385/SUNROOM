@@ -123,9 +123,11 @@ def main():
     server.daemon_threads = True
     args.ready_file.parent.mkdir(parents=True, exist_ok=True)
     ready = {"port": server.server_address[1], "token": token, "pid": os.getpid()}
-    fd = os.open(str(args.ready_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as handle:
-        json.dump(ready, handle)
+    # Publish atomically so consumers never read a truncated ready file.
+    tmp = args.ready_file.with_name(args.ready_file.name + ".tmp")
+    tmp.write_text(json.dumps(ready), encoding="utf-8")
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, args.ready_file)
 
     def maintenance():
         while True:
