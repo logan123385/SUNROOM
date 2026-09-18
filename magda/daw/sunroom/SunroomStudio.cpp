@@ -678,7 +678,7 @@ void SunroomStudio::resized() {
     hearAfter_.setVisible(stagedApplied);
     if (tab_ == 0) {
         for (int i = 0; i < 3; ++i)
-            starterButtons_[i].setBounds(52 + i * 92, 132, 86, 32);
+            starterButtons_[i].setBounds(52 + i * 92, 168, 86, 32);
         skipGuide_.setBounds(w - 288, 18, 110, 34);
         studio_.setBounds(w - 155, 18, 125, 34);
         create_.setBounds(52, 177, 177, 36);
@@ -692,7 +692,7 @@ void SunroomStudio::resized() {
         warmth_.setBounds(right_.getX() + 12, ry + 80, 214, 30);
         space_.setBounds(right_.getX() + 12, ry + 160, 214, 30);
         motion_.setBounds(right_.getX() + 12, ry + 240, 214, 30);
-        const int rowH = std::max(30, std::min(43, (centre_.getHeight() - 112) / 7));
+        const int rowH = std::max(24, std::min(43, (centre_.getHeight() - 200) / 7));
         journeyArea_ = {centre_.getX() + 154, centre_.getY() + 52, centre_.getWidth() - 168,
                         rowH * 7};
         for (int i = 0; i < 7; ++i)
@@ -1112,13 +1112,24 @@ void SunroomStudio::timerCallback() {
 
 bool SunroomStudio::hasFixtureATracks() const {
     bool drums = false, bass = false, chords = false;
+    auto& cm = ClipManager::getInstance();
     for (const auto& track : TrackManager::getInstance().getTracks()) {
-        if (track.name == "Drums")
-            drums = true;
-        else if (track.name == "Bass")
-            bass = true;
-        else if (track.name == "Chords")
-            chords = true;
+        const char* role = track.name == "Drums"   ? "Drums"
+                           : track.name == "Bass"   ? "Bass"
+                           : track.name == "Chords" ? "Chords"
+                                                    : nullptr;
+        if (role == nullptr)
+            continue;
+        for (const auto& clip : cm.getClips()) {
+            if (clip.trackId == track.id && clip.name == juce::String("Fixture A / ") + role) {
+                if (track.name == "Drums")
+                    drums = true;
+                else if (track.name == "Bass")
+                    bass = true;
+                else
+                    chords = true;
+            }
+        }
     }
     return drums && bass && chords;
 }
@@ -1214,7 +1225,7 @@ void SunroomStudio::expandToFixtureB() {
         const auto reason = raw->failureReason().isNotEmpty()
                                 ? raw->failureReason()
                                 : juce::String("Could not build song sections.");
-        UndoManager::getInstance().clearHistory();
+        UndoManager::getInstance().discardLastCommand("Create beginner Fixture B sections");
         status_ = reason;
         return;
     }
@@ -1237,7 +1248,7 @@ void SunroomStudio::placeSceneInArrangement() {
     if (raw->failed()) {
         const auto reason = raw->failureReason().isNotEmpty() ? raw->failureReason()
                                                              : juce::String("Place Scene failed.");
-        UndoManager::getInstance().clearHistory();
+        UndoManager::getInstance().discardLastCommand("Place Scene in Arrangement");
         status_ = reason;
         repaint();
         return;
@@ -1255,7 +1266,7 @@ void SunroomStudio::applySharedSpatialReturn() {
         repaint();
         return;
     }
-    const float amount = static_cast<float>(space_.getValue());
+    const float amount = static_cast<float>(space_.getValue() / 100.0);
     auto command = std::make_unique<ApplySharedSpatialReturnCommand>(amount);
     auto* raw = command.get();
     UndoManager::getInstance().executeCommand(std::move(command));
@@ -1263,7 +1274,7 @@ void SunroomStudio::applySharedSpatialReturn() {
         const auto reason = raw->failureReason().isNotEmpty()
                                 ? raw->failureReason()
                                 : juce::String("Shared Space failed.");
-        UndoManager::getInstance().clearHistory();
+        UndoManager::getInstance().discardLastCommand("Apply shared spatial return");
         status_ = reason;
         repaint();
         return;
@@ -1374,7 +1385,7 @@ void SunroomStudio::createAndPlay() {
             const auto reason = raw->failureReason().isNotEmpty()
                                     ? raw->failureReason()
                                     : juce::String("Could not create starter.");
-            UndoManager::getInstance().clearHistory();
+            UndoManager::getInstance().discardLastCommand("Create beginner Fixture A");
             status_ = reason;
             lastSummary_.clear();
             repaint();
@@ -1514,17 +1525,31 @@ void SunroomStudio::askCoach() {
     const auto url = remoteUrl_.getText().trim();
     const auto model = remoteModel_.getText().trim();
     if (remote) {
-        Config::getInstance().setLocalServerUrl(url.toStdString());
-        Config::getInstance().setLocalServerModel(model.toStdString());
-        Config::getInstance().save();
+        auto& config = Config::getInstance();
+        config.setLocalServerUrl(url.toStdString());
+        config.setLocalServerModel(model.toStdString());
+        for (const auto* role : {"command", "music", "faust", "chord", "controller", "theme"}) {
+            auto selected = config.getAgentLLMConfig(role);
+            if (selected.provider != provider::LOCAL_SERVER)
+                continue;
+            selected.baseUrl = url.toStdString();
+            selected.model = model.toStdString();
+            config.setAgentLLMConfig(role, selected);
+        }
+        config.save();
     }
     const auto revision = projectRevision_;
+    const auto requestMutation = ProjectManager::getInstance().mutationRevision();
+    const auto requestTrack = SelectionManager::getInstance().getSelectedTrack();
+    const auto requestClip = SelectionManager::getInstance().getSelectedClip();
     auto safe = juce::Component::SafePointer<SunroomStudio>(this);
-    aiThread_ = std::thread([this, safe, question, context, backend, url, model, revision] {
+    aiThread_ = std::thread([this, safe, question, context, backend, url, model, revision,
+                             requestMutation, requestTrack, requestClip] {
         auto result = SunroomMlxClient::coach(question, context, backend, url, model);
         const bool cancelled = cancelled_.load();
         busy_ = false;
-        juce::MessageManager::callAsync([safe, result, cancelled, question, backend, revision] {
+        juce::MessageManager::callAsync([safe, result, cancelled, question, backend, revision,
+                                         requestMutation, requestTrack, requestClip] {
             if (!safe || cancelled || safe->projectRevision_ != revision)
                 return;
             safe->answer_.setText(result.success ? result.text : result.error);
@@ -1538,7 +1563,14 @@ void SunroomStudio::askCoach() {
                 safe->coachHistory_ =
                     ("You: " + question + "\nCompanion: " + result.text).substring(0, 2800);
             const auto stagedDsl = extractCoachDsl(result.success ? result.text : juce::String());
-            if (stagedDsl.isNotEmpty()) {
+            const bool contextMoved =
+                ProjectManager::getInstance().mutationRevision() != requestMutation ||
+                SelectionManager::getInstance().getSelectedTrack() != requestTrack ||
+                SelectionManager::getInstance().getSelectedClip() != requestClip;
+            if (stagedDsl.isNotEmpty() && contextMoved) {
+                safe->status_ =
+                    "The song changed while the companion was thinking. Suggestion was not staged.";
+            } else if (stagedDsl.isNotEmpty()) {
                 captureDslProposal(stagedDsl,
                                    "Coach text contained SUNROOM_DSL. Not applied until you confirm.");
                 safe->status_ =

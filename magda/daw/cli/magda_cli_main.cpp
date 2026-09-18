@@ -323,7 +323,7 @@ class CommandDispatcher {
                                     ? raw->failureReason()
                                     : juce::String("Fixture A failed");
             // Failed commands must not remain undoable history.
-            undo.clearHistory();
+            undo.discardLastCommand("Create beginner Fixture A");
             return fail(reason);
         }
 
@@ -348,13 +348,24 @@ class CommandDispatcher {
     CommandResult fixtureB(const juce::StringArray&, size_t&) {
         auto hasFixture = [] {
             bool drums = false, bass = false, chords = false;
+            auto& cm = magda::ClipManager::getInstance();
             for (const auto& track : magda::TrackManager::getInstance().getTracks()) {
-                if (track.name == "Drums")
-                    drums = true;
-                else if (track.name == "Bass")
-                    bass = true;
-                else if (track.name == "Chords")
-                    chords = true;
+                const char* role = track.name == "Drums"   ? "Drums"
+                                   : track.name == "Bass"   ? "Bass"
+                                   : track.name == "Chords" ? "Chords"
+                                                            : nullptr;
+                if (role == nullptr)
+                    continue;
+                for (const auto& clip : cm.getClips()) {
+                    if (clip.trackId != track.id || clip.name != juce::String("Fixture A / ") + role)
+                        continue;
+                    if (track.name == "Drums")
+                        drums = true;
+                    else if (track.name == "Bass")
+                        bass = true;
+                    else
+                        chords = true;
+                }
             }
             return drums && bass && chords;
         };
@@ -366,7 +377,7 @@ class CommandDispatcher {
                 const auto reason = rawA->failureReason().isNotEmpty()
                                         ? rawA->failureReason()
                                         : juce::String("Fixture A failed");
-                magda::UndoManager::getInstance().clearHistory();
+                magda::UndoManager::getInstance().discardLastCommand("Create beginner Fixture A");
                 return fail(reason);
             }
         }
@@ -376,7 +387,8 @@ class CommandDispatcher {
         if (raw->failed()) {
             const auto reason = raw->failureReason().isNotEmpty() ? raw->failureReason()
                                                                  : juce::String("Fixture B failed");
-            magda::UndoManager::getInstance().clearHistory();
+            magda::UndoManager::getInstance().discardLastCommand(
+                "Create beginner Fixture B sections");
             return fail(reason);
         }
         const auto& info = magda::ProjectManager::getInstance().getCurrentProjectInfo();
@@ -402,7 +414,7 @@ class CommandDispatcher {
         if (raw->failed()) {
             const auto reason = raw->failureReason().isNotEmpty() ? raw->failureReason()
                                                                  : juce::String("Fixture C failed");
-            magda::UndoManager::getInstance().clearHistory();
+            magda::UndoManager::getInstance().discardLastCommand("Create beginner Fixture C");
             return fail(reason);
         }
         bool hasSession = false, hasArr = false, hasPad = false;
@@ -435,7 +447,7 @@ class CommandDispatcher {
             const auto reason = raw->failureReason().isNotEmpty()
                                     ? raw->failureReason()
                                     : juce::String("Place Scene failed");
-            magda::UndoManager::getInstance().clearHistory();
+            magda::UndoManager::getInstance().discardLastCommand("Place Scene in Arrangement");
             return fail(reason);
         }
         std::cout << raw->summary() << "\n";
@@ -456,7 +468,7 @@ class CommandDispatcher {
             const auto reason = raw->failureReason().isNotEmpty()
                                     ? raw->failureReason()
                                     : juce::String("Shared Space failed");
-            magda::UndoManager::getInstance().clearHistory();
+            magda::UndoManager::getInstance().discardLastCommand("Apply shared spatial return");
             return fail(reason);
         }
         std::cout << raw->summary() << "\n";
@@ -590,13 +602,24 @@ class CommandDispatcher {
     CommandResult createAndPlay(const juce::StringArray&, size_t&) {
         auto hasFixture = [] {
             bool drums = false, bass = false, chords = false;
+            auto& cm = magda::ClipManager::getInstance();
             for (const auto& track : magda::TrackManager::getInstance().getTracks()) {
-                if (track.name == "Drums")
-                    drums = true;
-                else if (track.name == "Bass")
-                    bass = true;
-                else if (track.name == "Chords")
-                    chords = true;
+                const char* role = track.name == "Drums"   ? "Drums"
+                                   : track.name == "Bass"   ? "Bass"
+                                   : track.name == "Chords" ? "Chords"
+                                                            : nullptr;
+                if (role == nullptr)
+                    continue;
+                for (const auto& clip : cm.getClips()) {
+                    if (clip.trackId != track.id || clip.name != juce::String("Fixture A / ") + role)
+                        continue;
+                    if (track.name == "Drums")
+                        drums = true;
+                    else if (track.name == "Bass")
+                        bass = true;
+                    else
+                        chords = true;
+                }
             }
             return drums && bass && chords;
         };
@@ -613,7 +636,7 @@ class CommandDispatcher {
             const auto reason = raw->failureReason().isNotEmpty()
                                     ? raw->failureReason()
                                     : juce::String("Create and Play failed");
-            magda::UndoManager::getInstance().clearHistory();
+            magda::UndoManager::getInstance().discardLastCommand("Create beginner Fixture A");
             return fail(reason);
         }
         if (!hasFixture())

@@ -170,7 +170,9 @@ class CreateFixtureCCommand final : public UndoableCommand {
   private:
     AudioEngine* engine_;
     ProjectInfo before_;
+    ProjectInfo after_;
     std::vector<TrackId> ids_;
+    void rollbackPartial();
     std::vector<TrackInfo> tracks_;
     std::vector<ClipInfo> clips_;
     juce::String summary_;
@@ -219,6 +221,7 @@ class ApplySharedSpatialReturnCommand final : public UndoableCommand {
     TrackInfo createdAuxTrack_;
     bool didCreateAux_ = false;
     DeviceId createdReverbId_ = INVALID_DEVICE_ID;
+    bool didAddReverb_ = false;
     std::vector<SendSnapshot> sends_;
     juce::String summary_;
     juce::String failureReason_;

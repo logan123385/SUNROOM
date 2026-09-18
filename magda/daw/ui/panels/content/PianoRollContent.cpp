@@ -1834,6 +1834,14 @@ void PianoRollContent::setClip(magda::ClipId clipId) {
 
         scrollToClipStartForTimeMode();
 
+        if (scaleLockToggle_) {
+            const auto& guide = ProjectManager::getInstance().getCurrentProjectInfo();
+            const bool guided = guide.sunroomGuide && guide.keyRoot >= 0;
+            scaleLockToggle_->setToggleState(guided, juce::dontSendNotification);
+            if (gridComponent_)
+                gridComponent_->setScaleLockEnabled(guided);
+        }
+
         // Center vertically on existing notes (or C4 if empty)
         centerOnNotes();
 

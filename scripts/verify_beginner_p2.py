@@ -105,7 +105,7 @@ undone = saved(
     )
 )
 undone_doc = dump_project("03b-dump", undone)
-assert "Drums" not in named_tracks(undone_doc)
+assert not ({"Drums", "Bass", "Chords"} & set(named_tracks(undone_doc))), named_tracks(undone_doc)
 
 redone = saved(
     call(

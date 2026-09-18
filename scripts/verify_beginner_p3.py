@@ -82,8 +82,9 @@ double = saved(
     )
 )
 double_doc = dump_project("03b-dump", double)
-drums = [t for t in double_doc.get("tracks") or [] if t.get("name") == "Drums"]
-assert len(drums) == 1, "create-and-play duplicated Drums track"
+for name in ("Drums", "Bass", "Chords"):
+    count = sum(1 for track in double_doc.get("tracks") or [] if track.get("name") == name)
+    assert count == 1, f"create-and-play duplicated {name}"
 assert "no duplicate insert" in (qa / "03-idempotent.log").read_text()
 
 out = {"steps": records, "first": str(first), "idempotent": str(double), "tracks": sorted(names)}

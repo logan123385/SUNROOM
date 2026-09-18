@@ -3,6 +3,7 @@
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import time
@@ -21,6 +22,17 @@ env["MAGDA_CONFIG_FILE"] = str(qa / "profile/config.json")
 env.setdefault("MAGDA_AUTOSAVE_RECOVER", "discard")
 records = []
 DSL = 'filter(tracks).track.group(name="All Tracks")'
+
+
+def clear_out(path):
+    path = pathlib.Path(path)
+    if path.is_dir():
+        shutil.rmtree(path)
+    elif path.exists():
+        path.unlink()
+    stem = path.with_suffix("")
+    if stem != path and stem.is_dir():
+        shutil.rmtree(stem)
 
 
 def run(name, *argv, expect_ok=True):
@@ -102,6 +114,7 @@ udoc = dump_project("04b-dump", saved(undone.stdout))
 assert "All Tracks" not in names(udoc)
 assert "Drums" in names(udoc)
 
+clear_out(qa / "Invalid.mgd")
 bad = run(
     "05-invalid",
     "exec",
@@ -117,6 +130,7 @@ assert bad.returncode != 0
 assert "Refused" in (bad.stdout + bad.stderr)
 assert not (qa / "Invalid.mgd").exists() and not (qa / "Invalid").exists()
 
+clear_out(qa / "Stale.mgd")
 stale = run(
     "06-stale",
     "exec",
@@ -131,7 +145,9 @@ stale = run(
 )
 assert stale.returncode != 0
 assert "project changed" in (stale.stdout + stale.stderr).lower()
+assert not (qa / "Stale.mgd").exists() and not (qa / "Stale").exists()
 
+clear_out(qa / "Selection.mgd")
 sel = run(
     "07-selection",
     "exec",
@@ -147,7 +163,9 @@ sel = run(
 )
 assert sel.returncode != 0
 assert "selection changed" in (sel.stdout + sel.stderr).lower()
+assert not (qa / "Selection.mgd").exists() and not (qa / "Selection").exists()
 
+clear_out(qa / "Canceled.mgd")
 cancel = run(
     "08-cancel",
     "exec",
@@ -162,7 +180,9 @@ cancel = run(
 )
 assert cancel.returncode != 0
 assert "canceled" in (cancel.stdout + cancel.stderr).lower()
+assert not (qa / "Canceled.mgd").exists() and not (qa / "Canceled").exists()
 
+clear_out(qa / "Twice.mgd")
 twice = run(
     "09-double",
     "exec",
@@ -177,6 +197,7 @@ twice = run(
 )
 assert twice.returncode != 0
 assert "already applied" in (twice.stdout + twice.stderr).lower()
+assert not (qa / "Twice.mgd").exists() and not (qa / "Twice").exists()
 assert starter.read_bytes() == starter_bytes
 
 result = {

@@ -198,12 +198,14 @@ TEST_CASE("Undoable commands mark the project dirty", "[project][undo]") {
         undoManager.executeCommand(std::make_unique<NoOpCommand>());
         REQUIRE(projectManager.isDirty());
 
+        bool savedOk = false;
         ProjectManager::setTestingDuringSaveHook([&projectManager]() {
             // Simulate another edit landing after the save snapshot.
             projectManager.markDirty();
         });
-        REQUIRE(projectManager.saveProjectAs(saved));
+        savedOk = projectManager.saveProjectAs(saved);
         ProjectManager::setTestingDuringSaveHook(nullptr);
+        REQUIRE(savedOk);
         CHECK(projectManager.isDirty());
     }
 

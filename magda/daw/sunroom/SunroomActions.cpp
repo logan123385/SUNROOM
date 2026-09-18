@@ -415,6 +415,10 @@ void CreateFixtureACommand::execute() {
     grid->loadInternalPluginToPad(kKickPad, "magda_kick");
     grid->loadInternalPluginToPad(kSnarePad, "magda_snare");
     grid->loadInternalPluginToPad(kHatPad, "magda_hat");
+    if (engine_ != nullptr)
+        if (auto* bridge = engine_->getAudioBridge())
+            bridge->getPluginManager().capturePluginState(
+                ChainNodePath::topLevelDevice(drumsId, drumDevice));
 
     tm.setTrackVolume(drumsId, 0.55f);
     const auto drumClip = cm.createMidiClipBeats(drumsId, 0.0, kFixtureBeats);
@@ -530,9 +534,15 @@ constexpr double kFixtureBBeats = kFixtureBBars * 4.0;
 constexpr double kSectionBeats = 8.0 * 4.0;  // 8 bars
 
 TrackId findNamedTrack(const juce::String& name) {
-    for (const auto& track : TrackManager::getInstance().getTracks())
-        if (track.name == name)
-            return track.id;
+    auto& cm = ClipManager::getInstance();
+    for (const auto& track : TrackManager::getInstance().getTracks()) {
+        if (track.name != name)
+            continue;
+        for (const auto& clip : cm.getClips()) {
+            if (clip.trackId == track.id && clip.name == "Fixture A / " + name)
+                return track.id;
+        }
+    }
     return INVALID_TRACK_ID;
 }
 
@@ -655,7 +665,8 @@ void CreateFixtureBCommand::execute() {
     for (const auto& clip : cm.getClips()) {
         if (clip.view != ClipView::Arrangement)
             continue;
-        if (clip.trackId == drumsId || clip.trackId == bassId || clip.trackId == chordsId) {
+        if ((clip.trackId == drumsId || clip.trackId == bassId || clip.trackId == chordsId) &&
+            clip.name.startsWith("Fixture A /")) {
             removedClips_.push_back(clip);
             cm.deleteClip(clip.id);
         }
@@ -701,11 +712,13 @@ void CreateFixtureBCommand::execute() {
         auto bassSess = cm.createMidiClipBeats(bassId, 0.0, kSectionBeats, ClipView::Session);
         cm.setClipSceneIndex(bassSess, scene);
         cm.setClipName(bassSess, juce::String("Scene ") + sec.name + " / Bass");
-        for (int beat = 0; beat < 8; ++beat) {
-            if (sec.sparseBass && (beat % 2) != 0)
-                continue;
-            addFixtureNote(cm, bassSess, roots[scene], static_cast<double>(beat), 0.85,
-                           sec.sparseBass ? 70 : 90);
+        for (int cycle = 0; cycle < 4; ++cycle) {
+            for (int beat = 0; beat < 8; ++beat) {
+                if (sec.sparseBass && (beat % 2) != 0)
+                    continue;
+                addFixtureNote(cm, bassSess, roots[scene], cycle * 8.0 + beat, 0.85,
+                               sec.sparseBass ? 70 : 90);
+            }
         }
         remember(bassSess);
 
@@ -713,9 +726,12 @@ void CreateFixtureBCommand::execute() {
         cm.setClipSceneIndex(chordSess, scene);
         cm.setClipName(chordSess, juce::String("Scene ") + sec.name + " / Chords");
         const int count = sec.thinChords ? 1 : 3;
-        for (int i = 0; i < count; ++i)
-            addFixtureNote(cm, chordSess, chords[static_cast<size_t>(scene)][static_cast<size_t>(i)],
-                           0.0, 7.85, sec.thinChords ? 60 : 80);
+        for (int cycle = 0; cycle < 4; ++cycle) {
+            for (int i = 0; i < count; ++i)
+                addFixtureNote(cm, chordSess,
+                               chords[static_cast<size_t>(scene)][static_cast<size_t>(i)],
+                               cycle * 8.0, 7.85, sec.thinChords ? 60 : 80);
+        }
         remember(chordSess);
 
         auto drumArr = cm.createMidiClipBeats(drumsId, sec.startBeat, kSectionBeats);
@@ -725,19 +741,24 @@ void CreateFixtureBCommand::execute() {
 
         auto bassArr = cm.createMidiClipBeats(bassId, sec.startBeat, kSectionBeats);
         cm.setClipName(bassArr, juce::String(sec.name) + " / Bass");
-        for (int beat = 0; beat < 8; ++beat) {
-            if (sec.sparseBass && (beat % 2) != 0)
-                continue;
-            addFixtureNote(cm, bassArr, roots[scene], static_cast<double>(beat), 0.85,
-                           sec.sparseBass ? 70 : 90);
+        for (int cycle = 0; cycle < 4; ++cycle) {
+            for (int beat = 0; beat < 8; ++beat) {
+                if (sec.sparseBass && (beat % 2) != 0)
+                    continue;
+                addFixtureNote(cm, bassArr, roots[scene], cycle * 8.0 + beat, 0.85,
+                               sec.sparseBass ? 70 : 90);
+            }
         }
         remember(bassArr);
 
         auto chordArr = cm.createMidiClipBeats(chordsId, sec.startBeat, kSectionBeats);
         cm.setClipName(chordArr, juce::String(sec.name) + " / Chords");
-        for (int i = 0; i < count; ++i)
-            addFixtureNote(cm, chordArr, chords[static_cast<size_t>(scene)][static_cast<size_t>(i)],
-                           0.0, 7.85, sec.thinChords ? 60 : 80);
+        for (int cycle = 0; cycle < 4; ++cycle) {
+            for (int i = 0; i < count; ++i)
+                addFixtureNote(cm, chordArr,
+                               chords[static_cast<size_t>(scene)][static_cast<size_t>(i)],
+                               cycle * 8.0, 7.85, sec.thinChords ? 60 : 80);
+        }
         remember(chordArr);
     }
 
@@ -822,9 +843,25 @@ void PlaceSceneInArrangementCommand::execute() {
             continue;
         const double length = session->placement.lengthBeats > 0.0 ? session->placement.lengthBeats
                                                                    : kSectionBeats;
-        auto newId =
-            cm.createMidiClipBeats(session->trackId, destStartBeats_, length, ClipView::Arrangement,
-                                   ClipOverlapPolicy::PreserveExisting);
+        ClipId newId = INVALID_CLIP_ID;
+        if (session->isAudio()) {
+            juce::String path;
+            if (!session->audio().events.empty())
+                path = session->audio().events.front().sourceFilePath();
+            if (path.isEmpty()) {
+                failureReason_ = "Session audio clip has no source file. Nothing was placed.";
+                failed_ = true;
+                for (const auto& clip : createdClips_)
+                    cm.deleteClip(clip.id);
+                createdClips_.clear();
+                return;
+            }
+            newId = cm.createAudioClipBeats(session->trackId, destStartBeats_, length, path,
+                                            ClipView::Arrangement);
+        } else {
+            newId = cm.createMidiClipBeats(session->trackId, destStartBeats_, length,
+                                           ClipView::Arrangement, ClipOverlapPolicy::PreserveExisting);
+        }
         if (newId == INVALID_CLIP_ID) {
             failureReason_ = "Could not create arrangement clip (overlap or track error).";
             failed_ = true;
@@ -866,6 +903,7 @@ void CreateFixtureCCommand::execute() {
     ClipManager::BatchScope batch;
 
     if (captured_) {
+        applyFixtureProject(engine_, after_);
         for (const auto& track : tracks_)
             tm.restoreTrack(track);
         for (const auto& clip : clips_)
@@ -893,7 +931,8 @@ void CreateFixtureCCommand::execute() {
     info.loopStartBeats = 0.0;
     info.loopEndBeats = kFixtureBeats;
     info.markers = {{1, 0.0, "Fixture C", static_cast<juce::uint32>(0xff6b8cae)}};
-    applyFixtureProject(engine_, info);
+    after_ = info;
+    applyFixtureProject(engine_, after_);
 
     const auto pulseId = tm.createTrack("Pulse", TrackType::Audio);
     ids_.push_back(pulseId);
@@ -901,17 +940,23 @@ void CreateFixtureCCommand::execute() {
     if (drumDevice == INVALID_DEVICE_ID) {
         failureReason_ = "Failed to add Drum Grid for Fixture C";
         failed_ = true;
+        rollbackPartial();
         return;
     }
     auto* grid = waitForDrumGrid(engine_, pulseId, drumDevice);
     if (grid == nullptr) {
         failureReason_ = "Drum Grid not ready for Fixture C";
         failed_ = true;
+        rollbackPartial();
         return;
     }
     grid->loadInternalPluginToPad(kKickPad, "magda_kick");
     grid->loadInternalPluginToPad(kSnarePad, "magda_snare");
     grid->loadInternalPluginToPad(kHatPad, "magda_hat");
+    if (engine_ != nullptr)
+        if (auto* bridge = engine_->getAudioBridge())
+            bridge->getPluginManager().capturePluginState(
+                ChainNodePath::topLevelDevice(pulseId, drumDevice));
 
     // Sparse arrangement rhythm (kick on 1 only)
     auto arr = cm.createMidiClipBeats(pulseId, 0.0, kFixtureBeats);
@@ -945,6 +990,19 @@ void CreateFixtureCCommand::execute() {
     if (engine_)
         engine_->locate(0);
     captured_ = true;
+}
+
+void CreateFixtureCCommand::rollbackPartial() {
+    auto& cm = ClipManager::getInstance();
+    ClipManager::BatchScope batch;
+    for (const auto& clip : clips_)
+        cm.deleteClip(clip.id);
+    clips_.clear();
+    for (auto id : ids_)
+        TrackManager::getInstance().deleteTrack(id);
+    ids_.clear();
+    tracks_.clear();
+    applyFixtureProject(engine_, before_);
 }
 
 void CreateFixtureCCommand::undo() {
@@ -1000,7 +1058,7 @@ bool isSpatialSendCandidate(const TrackInfo& track) {
 DeviceInfo sharedSpaceReverbDevice() {
     return makeDevice("magda_reverb", "Shared Space", false,
                       {{0, 1},
-                       {1, 0.32f},
+                       {1, 1.0f},
                        {2, 35},
                        {3, 55},
                        {4, 50},
@@ -1022,6 +1080,8 @@ void ApplySharedSpatialReturnCommand::execute() {
     if (captured_) {
         if (didCreateAux_)
             tm.restoreTrack(createdAuxTrack_);
+        else if (didAddReverb_)
+            createdReverbId_ = tm.addDeviceToTrack(auxTrackId_, sharedSpaceReverbDevice());
         for (auto& snap : sends_) {
             if (snap.addedSend)
                 tm.addSend(snap.sourceId, auxTrackId_);
@@ -1044,6 +1104,7 @@ void ApplySharedSpatialReturnCommand::execute() {
 
     sends_.clear();
     didCreateAux_ = false;
+    didAddReverb_ = false;
     createdReverbId_ = INVALID_DEVICE_ID;
     auxTrackId_ = findSharedSpatialAux();
 
@@ -1062,6 +1123,7 @@ void ApplySharedSpatialReturnCommand::execute() {
     } else if (const auto* aux = tm.getTrack(auxTrackId_);
                aux != nullptr && !trackHostsMagdaReverb(*aux)) {
         createdReverbId_ = tm.addDeviceToTrack(auxTrackId_, sharedSpaceReverbDevice());
+        didAddReverb_ = createdReverbId_ != INVALID_DEVICE_ID;
     }
 
     int sendCount = 0;
@@ -1106,6 +1168,9 @@ void ApplySharedSpatialReturnCommand::execute() {
             tm.deleteTrack(auxTrackId_);
             didCreateAux_ = false;
             auxTrackId_ = INVALID_TRACK_ID;
+        } else if (didAddReverb_ && createdReverbId_ != INVALID_DEVICE_ID) {
+            tm.removeDeviceFromTrack(auxTrackId_, createdReverbId_);
+            didAddReverb_ = false;
         }
         sends_.clear();
         return;
@@ -1207,14 +1272,16 @@ juce::String applyPendingDslProposal(MagdaApi& api, bool cancelled) {
     bool ok = false;
     juce::String results;
     juce::String error;
+    auto& undo = UndoManager::getInstance();
+    const auto depthBefore = undo.undoDepth();
     {
         CompoundOperationScope scope("Apply suggestion");
         ok = interpreter.execute(proposal.dsl.toRawUTF8());
         results = interpreter.getResults();
         error = interpreter.getError();
     }
-    auto& undo = UndoManager::getInstance();
-    const bool pushed = undo.canUndo() && undo.getUndoDescription() == "Apply suggestion";
+    const bool pushed = undo.undoDepth() == depthBefore + 1 && undo.canUndo() &&
+                        undo.getUndoDescription() == "Apply suggestion";
     if (!ok || results.contains("[!]")) {
         if (pushed)
             undo.undo();

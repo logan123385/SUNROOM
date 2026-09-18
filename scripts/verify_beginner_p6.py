@@ -90,6 +90,10 @@ again = saved(
 doc2 = dump_project("04b-dump", again)
 aux2 = [t for t in doc2.get("tracks") or [] if t.get("type") == "aux" or t.get("name") == "Shared Space"]
 assert len(aux2) == 1, f"duplicate Shared Space returns: {len(aux2)}"
+for track in doc2.get("tracks") or []:
+    for send in track.get("sends") or []:
+        if send.get("destTrackId") == aux2[0]["id"]:
+            assert abs(float(send.get("level", -1)) - 0.55) < 0.02, send
 raw = zlib.decompress(again.read_bytes()).decode("utf-8", "replace")
 assert raw.count('"name": "Shared Space"') <= 2  # track + device name
 

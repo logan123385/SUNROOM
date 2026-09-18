@@ -1938,10 +1938,28 @@ PianoRollGridComponent::getNoteInsertPosition(juce::Point<int> localPos) const {
     insertPos.beat = clipBeatForDisplayX(targetClipId, localPos.x);
     insertPos.noteNumber = yToNoteNumber(localPos.y);
     if (scaleLockEnabled_) {
-        const auto& guide = ProjectManager::getInstance().getCurrentProjectInfo();
-        if (guide.sunroomGuide && guide.keyRoot >= 0)
-            insertPos.noteNumber =
-                sunroom::snapToScale(insertPos.noteNumber, guide.keyRoot, guide.sunroomMood);
+        const auto* clip = ClipManager::getInstance().getClip(targetClipId);
+        const auto* track = clip != nullptr ? TrackManager::getInstance().getTrack(clip->trackId)
+                                            : nullptr;
+        bool drumGrid = false;
+        if (track != nullptr) {
+            for (const auto& element : track->chain.fxChainElements) {
+                if (!isDevice(element))
+                    continue;
+                const auto& device = getDevice(element);
+                if (device.pluginId == "drumgrid" || device.uniqueId == "drumgrid" ||
+                    device.fileOrIdentifier == "drumgrid") {
+                    drumGrid = true;
+                    break;
+                }
+            }
+        }
+        if (!drumGrid) {
+            const auto& guide = ProjectManager::getInstance().getCurrentProjectInfo();
+            if (guide.sunroomGuide && guide.keyRoot >= 0)
+                insertPos.noteNumber =
+                    sunroom::snapToScale(insertPos.noteNumber, guide.keyRoot, guide.sunroomMood);
+        }
     }
     return insertPos;
 }

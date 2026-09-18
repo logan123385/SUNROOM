@@ -194,7 +194,7 @@ print("06-readonly-preserve passed", flush=True)
 
 # Headless autosave recovery via MAGDA_AUTOSAVE_RECOVER=recover.
 sidecar = redone.with_name(redone.name + ".autosave")
-sidecar.write_bytes(prior)
+sidecar.write_bytes(undone.read_bytes())
 os.utime(sidecar, None)
 env_recover = env.copy()
 env_recover["MAGDA_AUTOSAVE_RECOVER"] = "recover"
@@ -210,7 +210,7 @@ recovered = saved(
 )
 assert recovered.is_file()
 recovered_fp = music_fingerprint(dump_project("07b-recover-dump", recovered))
-assert recovered_fp == redone_fp, "autosave recovery lost musical state"
+assert recovered_fp == undone_fp, "autosave recovery did not load the sidecar"
 
 out = {
     "steps": records,
