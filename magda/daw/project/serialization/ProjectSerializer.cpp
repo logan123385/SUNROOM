@@ -31,6 +31,17 @@ bool ProjectSerializer::saveToFile(const juce::File& file, const ProjectInfo& in
             return false;
         }
 
+        // Atomic TemporaryFile replace can overwrite a read-only destination via
+        // directory rename rights. Refuse unwritable targets before writing.
+        if (file.existsAsFile() && !file.hasWriteAccess()) {
+            lastError_ = "Destination is not writable: " + file.getFullPathName();
+            return false;
+        }
+        if (!parentDir.hasWriteAccess()) {
+            lastError_ = "Project directory is not writable: " + parentDir.getFullPathName();
+            return false;
+        }
+
         // Serialize to JSON
         auto json = serializeProject(info);
 

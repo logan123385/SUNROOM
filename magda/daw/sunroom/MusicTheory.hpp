@@ -51,6 +51,23 @@ inline bool inScale(int note, int root, int mood) {
     return std::find(intervals.begin(), intervals.end(), pitchClass(note - root)) !=
            intervals.end();
 }
+/** Snap a new pitched note onto the nearest in-scale pitch. Prefer upward on ties.
+ *  Existing out-of-scale notes are never rewritten by this helper — callers apply
+ *  it only at note-creation time. Drum lanes must not call it. */
+inline int snapToScale(int note, int root, int mood) {
+    note = std::clamp(note, 0, 127);
+    if (inScale(note, root, mood))
+        return note;
+    for (int distance = 1; distance <= 6; ++distance) {
+        const int up = note + distance;
+        if (up <= 127 && inScale(up, root, mood))
+            return up;
+        const int down = note - distance;
+        if (down >= 0 && inScale(down, root, mood))
+            return down;
+    }
+    return note;
+}
 // A scale degree can cross an octave. Never modulo-wrap it down unexpectedly.
 inline int degreeNote(int degree, int root, int mood, int octaveBase = 48) {
     int octave = static_cast<int>(std::floor(degree / 7.0));
@@ -137,7 +154,7 @@ inline constexpr std::array<Layer, 7> layers{{
 struct Options {
     int mood = 0;
     int root = 2;
-    int bars = 32;
+    int bars = 8;  // Short loop first so beginners hear a fuller start quickly.
     double tempo = 84;
     float motion = 0.45f;
     float space = 0.6f;

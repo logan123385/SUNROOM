@@ -32,6 +32,12 @@ int main() {
         REQUIRE(pitchClass(-1) == 11 && pitchClass(14) == 2);
         REQUIRE(degreeNote(7, 2, 0) == 62 && degreeNote(-1, 2, 0) == 48);
         REQUIRE(inScale(59, 2, 0) && !inScale(58, 2, 0));  // B vs Bb defines D Dorian.
+        // Scale lock: nearest in-scale pitch; ties prefer upward; bounds stay MIDI-legal.
+        REQUIRE(snapToScale(58, 2, 0) == 59);   // Bb -> B (up)
+        REQUIRE(snapToScale(61, 2, 0) == 62);   // C# -> D (up)
+        REQUIRE(snapToScale(60, 2, 0) == 60);   // already in scale
+        REQUIRE(snapToScale(0, 2, 0) == 0 || inScale(snapToScale(0, 2, 0), 2, 0));
+        REQUIRE(snapToScale(127, 2, 0) == 127 || inScale(snapToScale(127, 2, 0), 2, 0));
         REQUIRE(feeling(62, 2, 0).kind == Feeling::Home);
         REQUIRE(feeling(69, 2, 0).kind == Feeling::Anchor);
         int journeys = 0, notes = 0;
@@ -77,7 +83,12 @@ int main() {
         REQUIRE(safe.tempo == 84 && safe.motion == .5f && safe.root == 11 && safe.mood == 3 &&
                 safe.bars == 8);
         for (auto& phrase : a.phrases[4])
-            REQUIRE(phrase.start >= 32 && phrase.start < 96);  // calm intro/outro
+            REQUIRE(phrase.start >= 0 && phrase.start < 32);  // 8-bar loop keeps the pulse in frame
+        Options longForm;
+        longForm.bars = 32;
+        auto longSong = compose(longForm);
+        for (auto& phrase : longSong.phrases[4])
+            REQUIRE(phrase.start >= 32 && phrase.start < 96);  // calm intro/outro on longer journeys
         std::cout << journeys << " arrangements, " << notes
                   << " notes, pitch/timing/scale/variation bounds passed.\n";
         return 0;

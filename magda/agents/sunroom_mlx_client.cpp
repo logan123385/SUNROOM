@@ -406,4 +406,19 @@ void SunroomMlxClient::shutdown() {
     if (readyFile.existsAsFile())
         readyFile.deleteFile();
 }
+
+juce::String SunroomMlxClient::localModelStatus() {
+    const auto configFile = paths::dataDir().getChildFile("sunroom-ai.json");
+    if (!configFile.existsAsFile())
+        return "The local AI model is not installed. Run Setup AI.command in the SUNROOM folder. "
+               "Offline Create and Play still works. This is not an AI answer.";
+    const auto config = juce::JSON::parse(configFile);
+    const auto python = config["python"].toString();
+    const auto model = config["model"].toString();
+    if (python.isEmpty() || model.isEmpty() || !juce::File(python).existsAsFile() ||
+        !juce::File(model).getChildFile("config.json").existsAsFile())
+        return "The local AI model is not installed. Run Setup AI.command in the SUNROOM folder. "
+               "Offline Create and Play still works. This is not an AI answer.";
+    return "Local model files are present. This check did not load weights or call a server.";
+}
 }  // namespace magda

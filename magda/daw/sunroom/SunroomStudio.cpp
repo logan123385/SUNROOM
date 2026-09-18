@@ -9,6 +9,8 @@
 #include "core/MidiNoteCommands.hpp"
 #include "core/TrackCommands.hpp"
 #include "core/TrackManager.hpp"
+#include "core/UndoManager.hpp"
+#include "core/ViewModeController.hpp"
 #include "engine/AudioEngine.hpp"
 #include "magda/agents/sunroom_mlx_client.hpp"
 #include "ui/state/TimelineController.hpp"
@@ -209,22 +211,95 @@ SunroomStudio::SunroomStudio(AudioEngine* engine) : engine_(engine) {
     setLookAndFeel(skin_.get());
     setOpaque(true);
     setWantsKeyboardFocus(true);
-    for (auto* button : {&newProject_, &openProject_, &create_, &play_, &stop_, &variation_, &save_,
-                         &export_, &undo_, &studio_, &ask_, &cancelAI_, &addPhrase_, &clearPhrase_,
-                         &library_, &applyRecipe_, &saveKey_})
+    for (auto* button :
+         {&newProject_, &openProject_, &create_, &play_, &stop_, &makeBeat_, &addChords_,
+          &playSound_, &captureJam_, &placeScene_, &returnArrange_, &openMix_, &sharedSpace_,
+          &journey_, &save_, &export_,
+          &undo_, &studio_, &skipGuide_, &ask_, &cancelAI_, &addPhrase_, &clearPhrase_, &library_,
+          &applyRecipe_, &applySuggestion_, &cancelSuggestion_, &hearBefore_, &hearAfter_,
+          &saveKey_})
         addAndMakeVisible(button);
     create_.setName("primary");
     play_.setName("primary");
     ask_.setName("primary");
-    create_.setTooltip("Create real editable MIDI tracks. Your existing tracks stay in the "
-                       "project. Cmd-Z undoes the whole addition.");
+    create_.setTooltip("Create editable drums, bass and chords, then play. Cmd-Z undoes the whole "
+                       "addition. Rapid clicks will not double-insert.");
+    journey_.setTooltip("Optional SUNROOM mood journey using the feeling controls below.");
+    skipGuide_.setTooltip("Skip the guided studio and open Full studio.");
+    makeBeat_.setTooltip("Open the Drum Grid clip so you can change a step.");
+    addChords_.setTooltip("Open the Chords clip in the note editor.");
+    playSound_.setTooltip("Open the Bass clip and turn on computer keyboard play.");
+    captureJam_.setTooltip(
+        "Arm real Session→Arrangement capture (transport Record). Launch clips while armed; stop "
+        "recording to commit timed performance. Not a static scene copy.");
+    placeScene_.setTooltip(
+        "Deterministically place the first scene's Session clips into an empty arrangement range "
+        "(after the loop). Distinct from Capture Jam.");
+    returnArrange_.setTooltip(
+        "Return tracks from Session override to Arrangement playback at the engine boundary.");
+    openMix_.setTooltip(
+        "Open the real Mixer (faders, pan, mute, solo, meters). Analyze stays on the mixer rail. "
+        "Advanced sends/spectrum stay collapsed unless you expand them.");
+    sharedSpace_.setTooltip(
+        "Create or reuse one Shared Space Aux return with reverb, then set send amount from the "
+        "Space slider. Undoable; does not duplicate returns.");
+    makeBeat_.onClick = [this] {
+        openFixtureClip("Drums", "Fixture A / Drums", false);
+    };
+    addChords_.onClick = [this] {
+        openFixtureClip("Chords", "Fixture A / Chords", false);
+    };
+    playSound_.onClick = [this] {
+        openFixtureClip("Bass", "Fixture A / Bass", true);
+    };
+    captureJam_.onClick = [this] {
+        stopNotes();
+        status_ = "Capture Jam: arming Session→Arrangement recorder. Launch clips, then stop "
+                  "recording to commit.";
+        if (onCaptureJam)
+            onCaptureJam();
+        else if (onShowSession)
+            onShowSession();
+        repaint();
+    };
+    placeScene_.onClick = [this] { placeSceneInArrangement(); };
+    returnArrange_.onClick = [this] {
+        stopNotes();
+        if (onReturnToArrangement)
+            onReturnToArrangement();
+        status_ = playbackSourceSummary();
+        repaint();
+    };
+    openMix_.onClick = [this] {
+        stopNotes();
+        status_ = "Mixer: balance with faders, pan, mute and solo. Analyze is on the mixer rail.";
+        if (onShowMix)
+            onShowMix();
+        else if (onOpenStudio)
+            onOpenStudio();
+        repaint();
+    };
+    sharedSpace_.onClick = [this] { applySharedSpatialReturn(); };
+    for (int i = 0; i < 3; ++i) {
+        starterButtons_[i].setButtonText(juce::StringArray{"Beat", "Song", "Blank"}[i]);
+        starterButtons_[i].setClickingTogglesState(true);
+        starterButtons_[i].setRadioGroupId(71001);
+        starterButtons_[i].onClick = [this, i] {
+            setStarter(i == 0   ? StarterKind::Beat
+                       : i == 1 ? StarterKind::Song
+                                : StarterKind::Blank);
+        };
+        addAndMakeVisible(starterButtons_[i]);
+    }
+    starterButtons_[0].setToggleState(true, juce::dontSendNotification);
     for (int i = 0; i < 4; ++i) {
         tabs_[i].setButtonText(
             juce::StringArray{"Create", "Note garden", "Sound shelf", "AI companion"}[i]);
         tabs_[i].onClick = [this, i] { setTab(i); };
         addAndMakeVisible(tabs_[i]);
-        moodButtons_[i].setButtonText(juce::String(moods[i].name) + "\n" + moods[i].scaleName);
-        moodButtons_[i].setTooltip(moods[i].description);
+        moodButtons_[i].setButtonText(moods[i].name);
+        moodButtons_[i].setTooltip(juce::String(moods[i].name) + " — " + moods[i].scaleName +
+                                   ". " + moods[i].description);
         moodButtons_[i].onClick = [this, i] {
             options_.mood = i;
             options_.root = moods[i].suggestedRoot;
@@ -294,7 +369,7 @@ SunroomStudio::SunroomStudio(AudioEngine* engine) : engine_(engine) {
         repaint();
         status_ = "The companion and Full studio agents now use " + aiBackend_.getText() + ".";
     };
-    for (auto* box : {&root_, &length_, &aiBackend_})
+    for (auto* box : {&root_, &length_, &aiBackend_, &soundFilter_})
         addAndMakeVisible(box);
     for (auto* s : {&tempo_, &motion_, &space_, &warmth_}) {
         s->setSliderStyle(juce::Slider::LinearHorizontal);
@@ -328,15 +403,16 @@ SunroomStudio::SunroomStudio(AudioEngine* engine) : engine_(engine) {
     prompt_.setMultiLine(true);
     prompt_.setReturnKeyStartsNewLine(true);
     prompt_.setTextToShowWhenEmpty(
-        "Help me make a warm, floating psychill track with a gentle pulse...", muted);
+        "Give me a recipe for a warm, floating loop at 84 BPM, 8 bars...", muted);
     prompt_.setInputRestrictions(3000);
     answer_.setMultiLine(true);
     answer_.setReadOnly(true);
     answer_.setScrollbarsShown(true);
-    answer_.setText("A little guidance, a lot of room to explore.\n\nAsk about a note, a sound, an "
-                    "arrangement, or how to use SUNROOM.\n\nTry: 'Give me a recipe for a "
-                    "mysterious psybient journey at 76 BPM.'\n\nThe assistant receives your "
-                    "current musical settings. It cannot hear your audio.");
+    answer_.setText(
+        "A little guidance, a lot of room to explore.\n\nNew here? Choose Beat or Song, then "
+        "Create and Play. Blank opens an empty project. Skip guide opens Full studio anytime.\n\n"
+        "Try: 'Give me a recipe for a warm, floating loop at 84 BPM, 8 bars.'\n\nThe assistant "
+        "receives your current musical settings. It cannot hear your audio.");
     remoteUrl_.setText(Config::getInstance().getLocalServerUrl());
     remoteUrl_.setTextToShowWhenEmpty("https://your-mini-pc:8080/v1", muted);
     remoteModel_.setText(Config::getInstance().getLocalServerModel());
@@ -357,15 +433,19 @@ SunroomStudio::SunroomStudio(AudioEngine* engine) : engine_(engine) {
         } else
             answer_.setText(error);
     };
-    create_.onClick = [this] { buildJourney(); };
-    variation_.onClick = [this] {
-        ++options_.seed;
-        status_ = "Variation " + juce::String(options_.seed) +
-                  " ready. Build my journey adds it to the project.";
-        repaint();
+    create_.onClick = [this] { createAndPlay(); };
+    journey_.onClick = [this] { buildJourney(); };
+    skipGuide_.onClick = [this] {
+        if (onOpenStudio)
+            onOpenStudio();
     };
     play_.onClick = [this] {
         stopNotes();
+        if (TrackManager::getInstance().getTracks().empty()) {
+            status_ = "Nothing to hear yet — Create and Play first.";
+            repaint();
+            return;
+        }
         if (engine_) {
             if (engine_->isPlaying())
                 engine_->stop();
@@ -402,8 +482,12 @@ SunroomStudio::SunroomStudio(AudioEngine* engine) : engine_(engine) {
         if (onExport)
             onExport();
     };
+    studio_.setTooltip("Coloured blocks are your song. Click one to edit notes. "
+                       "SUNROOM / Guided studio brings you back.");
     studio_.onClick = [this] {
         stopNotes();
+        status_ = "Coloured blocks are your song. Click one to edit notes. "
+                  "SUNROOM / Guided studio brings you back.";
         if (onOpenStudio)
             onOpenStudio();
     };
@@ -420,6 +504,19 @@ SunroomStudio::SunroomStudio(AudioEngine* engine) : engine_(engine) {
         repaint();
     };
     library_.onClick = [] { soundLibrary().startAsProcess(); };
+    soundFilter_.addItem("All kinds", 1);
+    soundFilter_.addItem("Kick", 2);
+    soundFilter_.addItem("Hand", 3);
+    soundFilter_.addItem("Hat", 4);
+    soundFilter_.addItem("Pitched bell", 5);
+    soundFilter_.addItem("Texture", 6);
+    soundFilter_.addItem("Transition", 7);
+    soundFilter_.setSelectedId(1, juce::dontSendNotification);
+    soundFilter_.onChange = [this] {
+        refreshSoundShelf();
+        repaint();
+    };
+    refreshSoundShelf();
     applyRecipe_.onClick = [this] {
         if (!recipe_.isObject())
             return;
@@ -451,7 +548,15 @@ SunroomStudio::SunroomStudio(AudioEngine* engine) : engine_(engine) {
         setTab(0);
         status_ = "AI recipe loaded. Build my journey turns these settings into editable music.";
     };
-    samples_ = soundLibrary().findChildFiles(juce::File::findFiles, true, "*.wav");
+    applySuggestion_.setTooltip(
+        "Run the staged SUNROOM_DSL line through the real checker. Nothing changes until this.");
+    cancelSuggestion_.setTooltip("Drop the staged suggestion. The song stays as it is.");
+    hearBefore_.setTooltip("Undo only if the last step is this suggestion. Later edits stay.");
+    hearAfter_.setTooltip("Redo only that suggestion. This is not a separate mix render.");
+    applySuggestion_.onClick = [this] { applyStagedSuggestion(); };
+    cancelSuggestion_.onClick = [this] { cancelStagedSuggestion(); };
+    hearBefore_.onClick = [this] { hearStagedSuggestion(false); };
+    hearAfter_.onClick = [this] { hearStagedSuggestion(true); };
     for (int i = 0; i < 16; ++i)
         if (i % 3 == 0)
             melody_[static_cast<size_t>((i * 2) % 7)][i] = true;
@@ -471,6 +576,36 @@ SunroomStudio::~SunroomStudio() {
     if (aiThread_.joinable())
         aiThread_.join();
     setLookAndFeel(nullptr);
+}
+void SunroomStudio::refreshSoundShelf() {
+    StarterQuery query;
+    switch (soundFilter_.getSelectedId()) {
+        case 2:
+            query.kind = "kick";
+            break;
+        case 3:
+            query.kind = "hand";
+            break;
+        case 4:
+            query.kind = "shaker";
+            break;
+        case 5:
+            query.kind = "pitched";
+            break;
+        case 6:
+            query.kind = "texture";
+            break;
+        case 7:
+            query.kind = "transition";
+            break;
+        default:
+            break;
+    }
+    samples_.clear();
+    const auto root = soundLibrary();
+    for (const auto& sound : queryStarterCatalog(query).matches)
+        samples_.add(root.getChildFile(sound.file));
+    sampleOffset_ = 0;
 }
 void SunroomStudio::applyControls() {
     root_.setSelectedId(options_.root + 1, juce::dontSendNotification);
@@ -496,7 +631,9 @@ void SunroomStudio::resized() {
     openProject_.setVisible(tab_ == 0);
     for (int i = 0; i < 4; ++i)
         tabs_[i].setBounds(230 + i * 112, 18, 106, 34);
-    studio_.setBounds(w - 155, 18, 125, 34);
+    // studio_ / skipGuide_ placed in tab_==0 branch; keep defaults for other tabs
+    if (tab_ != 0)
+        studio_.setBounds(w - 155, 18, 125, 34);
     hero_ = {28, 74, w - 56, 158};
     auto body = juce::Rectangle<int>(28, 250, w - 56, h - 308);
     left_ = body.removeFromLeft(220);
@@ -504,9 +641,12 @@ void SunroomStudio::resized() {
     right_ = body.removeFromRight(238);
     body.removeFromRight(18);
     centre_ = body;
-    for (auto* b : {&newProject_, &openProject_, &create_, &play_, &stop_, &variation_, &save_,
-                    &export_, &undo_})
+    for (auto* b : {&newProject_, &openProject_, &create_, &play_, &stop_, &makeBeat_, &addChords_,
+                    &playSound_, &captureJam_, &placeScene_, &returnArrange_, &openMix_,
+                    &sharedSpace_, &journey_, &save_, &export_, &undo_, &skipGuide_})
         b->setVisible(tab_ == 0);
+    for (auto& b : starterButtons_)
+        b.setVisible(tab_ == 0);
     for (auto& b : moodButtons_)
         b.setVisible(tab_ == 0);
     for (auto& b : layerButtons_)
@@ -519,6 +659,7 @@ void SunroomStudio::resized() {
     addPhrase_.setVisible(tab_ == 1);
     clearPhrase_.setVisible(tab_ == 1);
     library_.setVisible(tab_ == 2);
+    soundFilter_.setVisible(tab_ == 2);
     for (auto* c : std::initializer_list<juce::Component*>{&prompt_, &answer_, &ask_, &aiBackend_,
                                                            &cancelAI_})
         c->setVisible(tab_ == 3);
@@ -527,7 +668,19 @@ void SunroomStudio::resized() {
     apiKey_.setVisible(tab_ == 3 && aiBackend_.getSelectedId() == 3);
     saveKey_.setVisible(tab_ == 3 && aiBackend_.getSelectedId() == 3);
     applyRecipe_.setVisible(tab_ == 3 && recipe_.isObject());
+    const auto* staged = pendingDslProposal();
+    const bool stagedReady = tab_ == 3 && staged != nullptr && staged->phase == ProposalPhase::Ready;
+    const bool stagedApplied =
+        tab_ == 3 && staged != nullptr && staged->phase == ProposalPhase::Applied;
+    applySuggestion_.setVisible(stagedReady);
+    cancelSuggestion_.setVisible(stagedReady);
+    hearBefore_.setVisible(stagedApplied);
+    hearAfter_.setVisible(stagedApplied);
     if (tab_ == 0) {
+        for (int i = 0; i < 3; ++i)
+            starterButtons_[i].setBounds(52 + i * 92, 132, 86, 32);
+        skipGuide_.setBounds(w - 288, 18, 110, 34);
+        studio_.setBounds(w - 155, 18, 125, 34);
         create_.setBounds(52, 177, 177, 36);
         length_.setBounds(242, 177, 213, 36);
         for (int i = 0; i < 4; ++i)
@@ -546,10 +699,18 @@ void SunroomStudio::resized() {
             layerButtons_[i].setBounds(centre_.getX() + 9, journeyArea_.getY() + i * rowH, 142,
                                        rowH);
         const int by = centre_.getBottom() - 44;
-        play_.setBounds(centre_.getX() + 12, by, 76, 32);
-        stop_.setBounds(centre_.getX() + 95, by, 64, 32);
-        variation_.setBounds(centre_.getX() + 166, by, 121, 32);
-        undo_.setBounds(centre_.getRight() - 68, by, 56, 32);
+        makeBeat_.setBounds(centre_.getX() + 12, by - 80, 108, 28);
+        addChords_.setBounds(centre_.getX() + 128, by - 80, 108, 28);
+        playSound_.setBounds(centre_.getX() + 244, by - 80, 118, 28);
+        captureJam_.setBounds(centre_.getX() + 12, by - 44, 100, 28);
+        placeScene_.setBounds(centre_.getX() + 118, by - 44, 100, 28);
+        returnArrange_.setBounds(centre_.getX() + 224, by - 44, 140, 28);
+        openMix_.setBounds(centre_.getX() + 12, by - 8, 100, 28);
+        sharedSpace_.setBounds(centre_.getX() + 118, by - 8, 120, 28);
+        play_.setBounds(centre_.getX() + 248, by - 8, 70, 28);
+        stop_.setBounds(centre_.getX() + 324, by - 8, 56, 28);
+        journey_.setBounds(centre_.getX() + 386, by - 8, 110, 28);
+        undo_.setBounds(centre_.getRight() - 68, by - 8, 56, 28);
         newProject_.setBounds(w - 504, h - 43, 112, 30);
         openProject_.setBounds(w - 386, h - 43, 112, 30);
         save_.setBounds(w - 268, h - 43, 112, 30);
@@ -562,6 +723,7 @@ void SunroomStudio::resized() {
         clearPhrase_.setBounds(w - 369, h - 61, 130, 35);
     } else if (tab_ == 2) {
         library_.setBounds(w - 228, 100, 188, 34);
+        soundFilter_.setBounds(w - 430, 100, 190, 34);
     } else {
         aiBackend_.setBounds(36, 159, 260, 34);
         remoteUrl_.setBounds(309, 159, (w - 359) / 2, 34);
@@ -573,6 +735,10 @@ void SunroomStudio::resized() {
         ask_.setBounds(w - 192, h - 171, 156, 44);
         cancelAI_.setBounds(w - 192, h - 118, 70, 32);
         applyRecipe_.setBounds(w - 340, h - 222, 304, 32);
+        applySuggestion_.setBounds(w - 340, h - 258, 148, 30);
+        cancelSuggestion_.setBounds(w - 186, h - 258, 150, 30);
+        hearBefore_.setBounds(w - 340, h - 294, 148, 30);
+        hearAfter_.setBounds(w - 186, h - 294, 150, 30);
     }
 }
 
@@ -692,6 +858,16 @@ void SunroomStudio::paintCreate(juce::Graphics& g) {
                               " tracks in the song. Above: your next journey preview.",
          {centre_.getX() + 15, journeyArea_.getBottom() + 4, centre_.getWidth() - 30, 26}, 11,
          muted);
+    if (tracks.empty()) {
+        // First-song path stays visible until something is built.
+        const int y = getHeight() - 72;
+        text(g, "FIRST SONG", {30, y, 90, 22}, 10, orange, true);
+        text(g, "Beat or Song  →  Create and Play  →  edit a drum step in Session",
+             {120, y, getWidth() - 160, 22}, 12, paper);
+    }
+    if (lastSummary_.isNotEmpty())
+        text(g, lastSummary_, {centre_.getX() + 15, centre_.getY() + 34, centre_.getWidth() - 30, 18},
+             11, orange);
     text(g, "03 / SHAPE THE ATMOSPHERE", {right_.getX() + 15, right_.getY() + 9, 215, 28}, 11,
          muted, true);
     const char* labels[]{"Warmth", "Space", "Motion"};
@@ -765,7 +941,7 @@ void SunroomStudio::paintGarden(juce::Graphics& g) {
 void SunroomStudio::paintSounds(juce::Graphics& g) {
     text(g, "A shelf full of possibility.", {36, 93, getWidth() - 300, 42}, 29, paper, true);
     text(g,
-         "Free instruments, spacious effects, and original sounds. Click an instrument to add it.",
+         "Declared kinds only. Unknown BPM and key are not guessed. Drums are not key-matched.",
          {37, 137, getWidth() - 74, 28}, 13, muted);
     const int libraryX = getWidth() - 345, cardW = (libraryX - 66) / 2;
     for (int i = 0; i < 7; ++i) {
@@ -916,15 +1092,319 @@ void SunroomStudio::audition(int note, bool together) {
 void SunroomStudio::timerCallback() {
     if (!sounding_.empty() && juce::Time::getMillisecondCounterHiRes() > noteOffTime_)
         stopNotes();
-    create_.setButtonText(TrackManager::getInstance().getTracks().empty() ? "Build my journey"
-                                                                          : "Add a new journey");
+    switch (starter_) {
+        case StarterKind::Blank:
+            create_.setButtonText("Start blank");
+            break;
+        case StarterKind::Beat:
+        case StarterKind::Song:
+            create_.setButtonText(hasFixtureATracks() ? "Play again" : "Create and Play");
+            break;
+    }
     play_.setButtonText(engine_ && engine_->isPlaying() ? "Pause" : "Play");
     undo_.setEnabled(UndoManager::getInstance().canUndo());
     ask_.setEnabled(!busy_.load());
     cancelAI_.setEnabled(busy_.load());
+    create_.setEnabled(!creating_.load());
     if (isShowing() && tab_ == 0 && engine_ && engine_->isPlaying())
         repaint();
 }
+
+bool SunroomStudio::hasFixtureATracks() const {
+    bool drums = false, bass = false, chords = false;
+    for (const auto& track : TrackManager::getInstance().getTracks()) {
+        if (track.name == "Drums")
+            drums = true;
+        else if (track.name == "Bass")
+            bass = true;
+        else if (track.name == "Chords")
+            chords = true;
+    }
+    return drums && bass && chords;
+}
+
+void SunroomStudio::openFixtureClip(const juce::String& trackName, const juce::String& clipName,
+                                    bool enableQwerty) {
+    stopNotes();
+    if (!hasFixtureATracks()) {
+        status_ = "Create and Play first — then you can edit drums, chords, or play a sound.";
+        repaint();
+        return;
+    }
+
+    TrackId trackId = INVALID_TRACK_ID;
+    for (const auto& track : TrackManager::getInstance().getTracks()) {
+        if (track.name == trackName) {
+            trackId = track.id;
+            break;
+        }
+    }
+    if (trackId == INVALID_TRACK_ID) {
+        status_ = "Could not find the " + trackName + " track.";
+        repaint();
+        return;
+    }
+
+    ClipId clipId = INVALID_CLIP_ID;
+    for (const auto& clip : ClipManager::getInstance().getClips()) {
+        if (clip.trackId == trackId && clip.name == clipName) {
+            clipId = clip.id;
+            break;
+        }
+    }
+    if (clipId == INVALID_CLIP_ID) {
+        for (const auto& clip : ClipManager::getInstance().getClips()) {
+            if (clip.trackId == trackId && clip.isMidi()) {
+                clipId = clip.id;
+                break;
+            }
+        }
+    }
+    if (clipId == INVALID_CLIP_ID) {
+        status_ = "No editable clip on " + trackName + " yet.";
+        repaint();
+        return;
+    }
+
+    status_ = "Editing " + clipName + ". Full studio stays linked to the same clip data.";
+    if (onEditClip)
+        onEditClip(trackId, clipId);
+    if (enableQwerty && onEnableQwerty)
+        onEnableQwerty();
+    repaint();
+}
+
+juce::String SunroomStudio::playbackSourceSummary() const {
+    int session = 0, arrangement = 0;
+    for (const auto& track : TrackManager::getInstance().getTracks()) {
+        if (track.type == TrackType::Chord)
+            continue;
+        if (track.playbackMode == TrackPlaybackMode::Session)
+            ++session;
+        else
+            ++arrangement;
+    }
+    if (session == 0)
+        return "Playback source: Arrangement (all tracks).";
+    if (arrangement == 0)
+        return "Playback source: Session (all tracks). Return to Arrangement when ready.";
+    return "Playback source: mixed — " + juce::String(session) + " Session, " +
+           juce::String(arrangement) +
+           " Arrangement. Return to Arrangement clears Session overrides.";
+}
+
+void SunroomStudio::expandToFixtureB() {
+    const auto& info = ProjectManager::getInstance().getCurrentProjectInfo();
+    bool hasSections = false;
+    for (const auto& marker : info.markers) {
+        if (marker.name == "Intro" || marker.name == "Main") {
+            hasSections = true;
+            break;
+        }
+    }
+    if (hasSections && info.loopEndBeats >= 127.0) {
+        status_ = "Song sections already present.";
+        return;
+    }
+
+    auto command = std::make_unique<CreateFixtureBCommand>(engine_);
+    auto* raw = command.get();
+    UndoManager::getInstance().executeCommand(std::move(command));
+    if (raw->failed()) {
+        const auto reason = raw->failureReason().isNotEmpty()
+                                ? raw->failureReason()
+                                : juce::String("Could not build song sections.");
+        UndoManager::getInstance().clearHistory();
+        status_ = reason;
+        return;
+    }
+    lastSummary_ = raw->summary();
+    status_ = lastSummary_ + "  Launch scenes, Capture Jam, or Place Scene.";
+}
+
+void SunroomStudio::placeSceneInArrangement() {
+    stopNotes();
+    if (!hasFixtureATracks()) {
+        status_ = "Create a Song (or Fixture B) first so scenes exist.";
+        repaint();
+        return;
+    }
+    const double dest =
+        juce::jmax(128.0, ProjectManager::getInstance().getCurrentProjectInfo().loopEndBeats);
+    auto command = std::make_unique<PlaceSceneInArrangementCommand>(0, dest);
+    auto* raw = command.get();
+    UndoManager::getInstance().executeCommand(std::move(command));
+    if (raw->failed()) {
+        const auto reason = raw->failureReason().isNotEmpty() ? raw->failureReason()
+                                                             : juce::String("Place Scene failed.");
+        UndoManager::getInstance().clearHistory();
+        status_ = reason;
+        repaint();
+        return;
+    }
+    status_ = raw->summary();
+    if (onShowArrange)
+        onShowArrange();
+    repaint();
+}
+
+void SunroomStudio::applySharedSpatialReturn() {
+    stopNotes();
+    if (!hasFixtureATracks()) {
+        status_ = "Create and Play first, then Shared Space can send tracks to one return.";
+        repaint();
+        return;
+    }
+    const float amount = static_cast<float>(space_.getValue());
+    auto command = std::make_unique<ApplySharedSpatialReturnCommand>(amount);
+    auto* raw = command.get();
+    UndoManager::getInstance().executeCommand(std::move(command));
+    if (raw->failed()) {
+        const auto reason = raw->failureReason().isNotEmpty()
+                                ? raw->failureReason()
+                                : juce::String("Shared Space failed.");
+        UndoManager::getInstance().clearHistory();
+        status_ = reason;
+        repaint();
+        return;
+    }
+    status_ = raw->summary();
+    repaint();
+}
+
+void SunroomStudio::applyStagedSuggestion() {
+    if (engine_ == nullptr)
+        return;
+    const auto line = applyPendingDslProposal(engine_->getMagdaApi(), false);
+    status_ = line.startsWith("Applied")
+                  ? line + " Undo hears the song before this suggestion. Redo hears it after. "
+                           "Then change one drum step (Make a Beat). That edit is not a learning score."
+                  : line;
+    resized();
+    repaint();
+}
+
+void SunroomStudio::cancelStagedSuggestion() {
+    if (engine_ != nullptr)
+        applyPendingDslProposal(engine_->getMagdaApi(), true);
+    status_ = "Suggestion canceled. Your music is unchanged.";
+    resized();
+    repaint();
+}
+
+void SunroomStudio::hearStagedSuggestion(bool after) {
+    auto& undo = UndoManager::getInstance();
+    if (!after) {
+        if (undo.canUndo() && undo.getUndoDescription() == "Apply suggestion") {
+            undo.undo();
+            status_ = "Hearing the song before the suggestion. Hear after restores only that step.";
+        } else {
+            status_ = "The last undo step is not this suggestion. Later edits stay. "
+                      "This will not restore the whole project.";
+        }
+    } else if (undo.canRedo() && undo.getRedoDescription() == "Apply suggestion") {
+        undo.redo();
+        status_ = "Hearing the song after the suggestion.";
+    } else {
+        status_ = "Nothing to restore. A later edit was not rolled back.";
+    }
+    resized();
+    repaint();
+}
+
+void SunroomStudio::setStarter(StarterKind kind) {
+    starter_ = kind;
+    for (int i = 0; i < 3; ++i)
+        starterButtons_[i].setToggleState(
+            (i == 0 && kind == StarterKind::Beat) || (i == 1 && kind == StarterKind::Song) ||
+                (i == 2 && kind == StarterKind::Blank),
+            juce::dontSendNotification);
+    switch (kind) {
+        case StarterKind::Beat:
+            status_ = "Beat: drums, bass and chords — eight bars at 100 BPM.";
+            break;
+        case StarterKind::Song:
+            status_ = "Song: Fixture A plus Intro/Main/Variation/Ending sections (Fixture B).";
+            break;
+        case StarterKind::Blank:
+            status_ = "Blank: keep an empty project and open Full studio when ready.";
+            break;
+    }
+    repaint();
+}
+
+void SunroomStudio::createAndPlay() {
+    stopNotes();
+    if (creating_.exchange(true)) {
+        status_ = "Still creating — one moment.";
+        repaint();
+        return;
+    }
+
+    struct ResetCreating {
+        std::atomic<bool>& flag;
+        ~ResetCreating() {
+            flag.store(false);
+        }
+    } reset{creating_};
+
+    switch (starter_) {
+        case StarterKind::Blank: {
+            if (!TrackManager::getInstance().getTracks().empty() && onNewProject)
+                onNewProject();
+            lastSummary_.clear();
+            status_ = "Blank project ready. Full studio is open for your own tracks.";
+            if (onShowSession)
+                onShowSession();
+            else if (onOpenStudio)
+                onOpenStudio();
+            repaint();
+            return;
+        }
+        case StarterKind::Beat:
+        case StarterKind::Song:
+            break;
+    }
+
+    if (!hasFixtureATracks()) {
+        auto command = std::make_unique<CreateFixtureACommand>(engine_);
+        auto* raw = command.get();
+        UndoManager::getInstance().executeCommand(std::move(command));
+        if (raw->failed()) {
+            const auto reason = raw->failureReason().isNotEmpty()
+                                    ? raw->failureReason()
+                                    : juce::String("Could not create starter.");
+            UndoManager::getInstance().clearHistory();
+            status_ = reason;
+            lastSummary_.clear();
+            repaint();
+            return;
+        }
+        lastSummary_ = raw->summary() + "  Next: open the Drums clip to change a step.";
+        status_ = lastSummary_;
+    } else {
+        status_ = "Starter already in the project — playing it.";
+    }
+
+    if (starter_ == StarterKind::Song)
+        expandToFixtureB();
+
+    ViewModeController::getInstance().setViewMode(ViewMode::Live);
+    if (onShowSession)
+        onShowSession();
+
+    if (engine_) {
+        engine_->locate(0);
+        // Device init is separate from content creation: try play, keep music if it fails.
+        engine_->play();
+        if (!engine_->isPlaying())
+            status_ = lastSummary_.isNotEmpty()
+                          ? lastSummary_ + " Music is ready — check audio output, then Play."
+                          : juce::String("Music is ready — check audio output, then Play.");
+    }
+    repaint();
+}
+
 void SunroomStudio::buildJourney() {
     stopNotes();
     if (std::none_of(options_.enabled.begin(), options_.enabled.end(), [](bool v) { return v; })) {
@@ -934,7 +1414,11 @@ void SunroomStudio::buildJourney() {
     UndoManager::getInstance().executeCommand(
         std::make_unique<CreateJourneyCommand>(options_, engine_));
     status_ = juce::String(options_.bars) + " bars of " + moodAt(options_.mood).name +
-              " music added. Press Play. Cmd-Z undoes this whole journey.";
+              " music added. Press Play.";
+    if (options_.bars > 8)
+        status_ += " The opening is mostly atmosphere — the pulse arrives later. "
+                   "Try 8 bars for a fuller start.";
+    status_ += " Cmd-Z undoes this whole journey.";
     repaint();
 }
 void SunroomStudio::addMelody() {
@@ -950,18 +1434,38 @@ void SunroomStudio::addMelody() {
     }
     UndoManager::getInstance().executeCommand(
         std::make_unique<AddMelodyCommand>(std::move(notes), options_));
-    status_ = "Your two-bar melody is now a real MIDI clip. Open Full studio to arrange it.";
+    status_ = "Your two-bar melody is now a real MIDI clip. Open Full studio — coloured blocks "
+              "are your song; Guided studio brings you back.";
 }
 void SunroomStudio::askCoach() {
     const auto question = prompt_.getText().trim();
     if (question.isEmpty() || busy_.exchange(true))
         return;
+    const int backend = aiBackend_.getSelectedId();
+    if (backend == 1) {
+        const auto readiness = SunroomMlxClient::localModelStatus();
+        if (readiness.startsWith("The local AI model is not installed")) {
+            busy_ = false;
+            answer_.setText(readiness);
+            status_ = readiness;
+            return;
+        }
+    } else if (backend == 2 && remoteUrl_.getText().trim().isEmpty()) {
+        busy_ = false;
+        status_ = "No mini PC address. Your music is unchanged. This is not an AI answer.";
+        answer_.setText(status_);
+        return;
+    } else if (backend == 3 && !SunroomMlxClient::hasOpenAIKey()) {
+        busy_ = false;
+        status_ = "Luna needs a saved key. Your music is unchanged. This is not an AI answer.";
+        answer_.setText(status_);
+        return;
+    }
     if (aiThread_.joinable())
         aiThread_.join();
     cancelled_ = false;
     recipe_ = juce::var{};
     applyRecipe_.setVisible(false);
-    const int backend = aiBackend_.getSelectedId();
     answer_.setText(
         backend == 3 ? "Luna is thinking with extra-high reasoning..."
         : backend == 2
@@ -1033,6 +1537,14 @@ void SunroomStudio::askCoach() {
             if (result.success)
                 safe->coachHistory_ =
                     ("You: " + question + "\nCompanion: " + result.text).substring(0, 2800);
+            const auto stagedDsl = extractCoachDsl(result.success ? result.text : juce::String());
+            if (stagedDsl.isNotEmpty()) {
+                captureDslProposal(stagedDsl,
+                                   "Coach text contained SUNROOM_DSL. Not applied until you confirm.");
+                safe->status_ =
+                    "Suggestion staged. Apply runs the real DSL checker. Cancel leaves the song alone.";
+                safe->resized();
+            }
             // Strict allow-list: parse a small recipe, never execute generated code.
             if (result.success) {
                 auto start = result.text.indexOf("{");
@@ -1105,6 +1617,8 @@ void SunroomStudio::askCoach() {
 }
 void SunroomStudio::projectOpened(const ProjectInfo& info) {
     ++projectRevision_;
+    if (engine_ != nullptr && pendingDslProposal() != nullptr)
+        applyPendingDslProposal(engine_->getMagdaApi(), true);
     answer_.setText("Project changed. Ask about this song whenever you are ready.");
     coachHistory_.clear();
     recipe_ = juce::var{};

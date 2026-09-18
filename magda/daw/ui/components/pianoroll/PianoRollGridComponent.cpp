@@ -1937,6 +1937,12 @@ PianoRollGridComponent::getNoteInsertPosition(juce::Point<int> localPos) const {
     insertPos.clipId = targetClipId;
     insertPos.beat = clipBeatForDisplayX(targetClipId, localPos.x);
     insertPos.noteNumber = yToNoteNumber(localPos.y);
+    if (scaleLockEnabled_) {
+        const auto& guide = ProjectManager::getInstance().getCurrentProjectInfo();
+        if (guide.sunroomGuide && guide.keyRoot >= 0)
+            insertPos.noteNumber =
+                sunroom::snapToScale(insertPos.noteNumber, guide.keyRoot, guide.sunroomMood);
+    }
     return insertPos;
 }
 

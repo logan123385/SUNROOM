@@ -23,6 +23,7 @@
 #include "../panels/LeftPanel.hpp"
 #include "../panels/RightPanel.hpp"
 #include "../panels/TransportPanel.hpp"
+#include "../panels/state/PanelController.hpp"
 #include "../state/KeyMappingStore.hpp"
 #include "../state/TimelineController.hpp"
 #include "../state/TimelineEvents.hpp"
@@ -239,26 +240,7 @@ MainWindow::MainWindow(AudioEngine* audioEngine)
         mainComponent->transportPanel->onQwertyKeyboardToggled = [this](bool enabled) {
             if (!mainComponent)
                 return;
-            auto* kb = mainComponent->getQwertyKeyboard();
-            if (!kb)
-                return;
-            kb->setEnabled(enabled);
-            if (enabled)
-                addKeyListener(kb);
-            else
-                removeKeyListener(kb);
-
-            // Enable/disable the virtual MIDI device and notify the
-            // routing selectors to refresh their cached device lists.
-            if (auto* engine = mainComponent->getAudioEngine()) {
-                if (auto* bridge = engine->getAudioBridge()) {
-                    if (auto* vmd = bridge->getQwertyMidiDevice())
-                        vmd->setEnabled(enabled);
-                }
-                if (auto* mb = engine->getMidiBridge())
-                    mb->notifyMidiDeviceListChanged();
-            }
-            DBG("QWERTY keyboard " << (enabled ? "ON" : "OFF"));
+            mainComponent->setQwertyKeyboardEnabled(enabled);
         };
     }
 
@@ -1082,6 +1064,8 @@ void MainWindow::MainComponent::setupViewModeListener() {
     // Listen to track property changes for playback mode updates
     TrackManager::getInstance().addListener(this);
     trackPropertyChanged(INVALID_TRACK_ID);
+
+    juce::Desktop::getInstance().addFocusChangeListener(this);
 }
 
 void MainWindow::MainComponent::setupAudioEngineCallbacks(AudioEngine* engine) {
@@ -1325,11 +1309,62 @@ void MainWindow::MainComponent::setupDeviceLoadingCallback() {
     sunroom_ = std::make_unique<sunroom::SunroomStudio>(getAudioEngine());
     addAndMakeVisible(*sunroom_);
     sunroom_->onOpenStudio = [this] { guidedStudio_ = false; resized(); repaint(); };
+    sunroom_->onShowSession = [this] {
+        guidedStudio_ = false;
+        ViewModeController::getInstance().setViewMode(ViewMode::Live);
+        resized();
+        repaint();
+    };
+    sunroom_->onEditClip = [this](TrackId /*trackId*/, ClipId clipId) {
+        guidedStudio_ = false;
+        ViewModeController::getInstance().setViewMode(ViewMode::Live);
+        SelectionManager::getInstance().selectClip(clipId);
+        ClipManager::getInstance().setSelectedClip(clipId);
+        if (bottomPanelCollapsed && bottomPanel) {
+            bottomPanelCollapsed = false;
+            bottomPanel->setCollapsed(false);
+            daw::ui::PanelController::getInstance().setCollapsed(daw::ui::PanelLocation::Bottom,
+                                                                 false);
+            if (footerBar)
+                footerBar->setBottomPanelCollapsed(false);
+        }
+        resized();
+        repaint();
+    };
+    sunroom_->onEnableQwerty = [this] { setQwertyKeyboardEnabled(true); };
+    sunroom_->onCaptureJam = [this] {
+        guidedStudio_ = false;
+        ViewModeController::getInstance().setViewMode(ViewMode::Live);
+        resized();
+        repaint();
+        if (mainView)
+            mainView->getTimelineController().dispatch(StartRecordEvent{});
+    };
+    sunroom_->onReturnToArrangement = [this] {
+        if (auto* engine = getAudioEngine())
+            engine->deactivateAllSessionClips();
+    };
+    sunroom_->onShowArrange = [this] {
+        guidedStudio_ = false;
+        ViewModeController::getInstance().setViewMode(ViewMode::Arrange);
+        resized();
+        repaint();
+    };
+    sunroom_->onShowMix = [this] {
+        guidedStudio_ = false;
+        // Guided entry leaves advanced mixer rows collapsed unless the user already
+        // expanded them this session; do not overwrite their Config preferences.
+        ViewModeController::getInstance().setViewMode(ViewMode::Mix);
+        resized();
+        repaint();
+    };
     sunroom_->onNewProject = [this] { commandManager.invokeDirectly(CommandIDs::newProject, true); };
     sunroom_->onOpenProject = [this] { commandManager.invokeDirectly(CommandIDs::openProject, true); };
     sunroom_->onSave = [this] { commandManager.invokeDirectly(CommandIDs::saveProject, true); };
     sunroom_->onExport = [this] { commandManager.invokeDirectly(CommandIDs::exportAudio, true); };
     guidedStudioButton_.onClick = [this] { guidedStudio_ = true; resized(); repaint(); };
+    guidedStudioButton_.setButtonText("Guided studio");
+    guidedStudioButton_.setTooltip("Reopen the beginner Create guide");
     addChildComponent(guidedStudioButton_);
 }
 
@@ -1385,6 +1420,8 @@ MainWindow::MainComponent::~MainComponent() {
 
     DBG("    [5g.2] Removing TrackManager listener...");
     TrackManager::getInstance().removeListener(this);
+
+    juce::Desktop::getInstance().removeFocusChangeListener(this);
 
     magda::MidiLearnCoordinator::getInstance().removeListener(this);
 
@@ -1756,6 +1793,52 @@ void MainWindow::MainComponent::midiLearnCleared(const magda::ChainNodePath& /*p
     juce::String msg = numRemoved == 1 ? "MIDI mapping cleared"
                                        : juce::String(numRemoved) + " MIDI mappings cleared";
     daw::ui::Toast::showGlobal(msg, 2000);
+}
+
+void MainWindow::MainComponent::setQwertyKeyboardEnabled(bool enabled) {
+    auto* kb = getQwertyKeyboard();
+    if (!kb)
+        return;
+
+    kb->setEnabled(enabled);
+    if (auto* win = findParentComponentOfClass<juce::DocumentWindow>()) {
+        if (enabled)
+            win->addKeyListener(kb);
+        else
+            win->removeKeyListener(kb);
+    }
+
+    if (auto* engine = getAudioEngine()) {
+        if (auto* bridge = engine->getAudioBridge()) {
+            if (auto* vmd = bridge->getQwertyMidiDevice())
+                vmd->setEnabled(enabled);
+        }
+        if (auto* mb = engine->getMidiBridge())
+            mb->notifyMidiDeviceListChanged();
+    }
+    if (transportPanel)
+        transportPanel->setQwertyKeyboardEnabled(enabled);
+    DBG("QWERTY keyboard " << (enabled ? "ON" : "OFF"));
+}
+
+void MainWindow::MainComponent::globalFocusChanged(juce::Component* focusedComponent) {
+    auto* kb = getQwertyKeyboard();
+    if (kb == nullptr || !kb->isEnabled())
+        return;
+
+    const bool typing =
+        focusedComponent != nullptr &&
+        (dynamic_cast<juce::TextEditor*>(focusedComponent) != nullptr ||
+         focusedComponent->findParentComponentOfClass<juce::TextEditor>() != nullptr ||
+         (dynamic_cast<juce::Label*>(focusedComponent) != nullptr &&
+          dynamic_cast<juce::Label*>(focusedComponent)->isEditable()));
+    auto* top = getTopLevelComponent();
+    const bool leftWindow =
+        focusedComponent == nullptr ||
+        (top != nullptr && focusedComponent != top && !top->isParentOf(focusedComponent));
+
+    if (typing || leftWindow)
+        kb->flushHeldNotes();
 }
 
 }  // namespace magda

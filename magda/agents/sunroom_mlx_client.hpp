@@ -23,6 +23,8 @@ class SunroomMlxClient final : public llm::LLMClient {
     static void cancelCoachRequests();
     // App teardown: cancel every stream and stop the local worker.
     static void shutdown();
+    /** Does not start the worker or load weights. */
+    static juce::String localModelStatus();
 
   protected:
     int backend_;

@@ -125,7 +125,8 @@ class MainWindow::MainComponent : public juce::Component,
                                   public ViewModeListener,
                                   public SelectionManagerListener,
                                   public TrackManagerListener,
-                                  public magda::MidiLearnCoordinatorListener {
+                                  public magda::MidiLearnCoordinatorListener,
+                                  private juce::FocusChangeListener {
   public:
     std::unique_ptr<sunroom::SunroomStudio> sunroom_;
     juce::TextButton guidedStudioButton_{"SUNROOM / Guided studio"};
@@ -163,6 +164,11 @@ class MainWindow::MainComponent : public juce::Component,
                             const magda::Binding& binding) override;
     void midiLearnCleared(const magda::ChainNodePath& path, int paramIndex,
                           magda::ControlTarget::Kind owner, int numRemoved) override;
+
+    // juce::FocusChangeListener — flush stuck QWERTY notes on focus loss / text fields
+    void globalFocusChanged(juce::Component* focusedComponent) override;
+
+    void setQwertyKeyboardEnabled(bool enabled);
 
     // Command manager access
     juce::ApplicationCommandManager& getCommandManager() {

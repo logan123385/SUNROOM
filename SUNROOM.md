@@ -4,12 +4,12 @@ Logan's personal psybient / psychill studio, built on [MAGDA](https://github.com
 
 ## Make your first track
 
-1. Open **SUNROOM.app**. On **Create**, choose a feeling. **Floating** is a gentle Dorian starting point at 84 BPM.
-2. Click **Build my journey**, then **Play**. The first section is deliberately spacious; the pulse arrives later. Choose **8 bars / a loop** for a quicker, fuller starting point.
+1. Open **SUNROOM.app**. On **Create**, choose a feeling. **Floating** is a gentle starting point at 84 BPM.
+2. Keep **8 bars / a loop** for a quick, fuller first listen (or pick 32/64 for a longer journey). Click **Build my journey**, then **Play**. Longer journeys open with mostly atmosphere; the pulse arrives later.
 3. Open **Note garden**. Bright notes belong to your selected scale. Click a note to hear it; Shift-click a second note to hear their relationship. These are useful analogies, not rules about how everyone must feel.
 4. Plant notes in the grid and click **Add melody to song**. Left to right is time; up is higher. The resulting MIDI stays editable.
 5. **Sound shelf** adds instruments and WAV sounds to your song. Scroll its sound list for more. A WAV lands at the current playhead.
-6. **Full studio** opens the arrangement, piano roll, mixer, recording, automation and plugin chains. **SUNROOM / Guided studio** brings you back.
+6. **Full studio** opens the arrangement, piano roll, mixer, recording, automation and plugin chains. Coloured blocks are your song; **SUNROOM / Guided studio** brings you back.
 7. **Save project** keeps an editable `.mgd` song. **Export audio** makes a WAV or FLAC you can share. Start with WAV 24-bit, 48 kHz.
 
 **Cmd-Z** undoes an edit, including a whole generated journey. Each new journey adds tracks, so undo an unwanted version before building another. The Create-page drawing previews the next journey; the actual song lives in Full studio. Warmth, Space and Motion shape the next generated music.

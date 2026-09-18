@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <functional>
 #include <mutex>
 #include <unordered_set>
 
@@ -35,6 +36,14 @@ static constexpr int kDefaultAutoSaveIntervalMs = 60000;
 static const char* const kProjectChangedWhileLoading =
     "The current project changed while the new project was loading. "
     "Open the file again to avoid losing those changes.";
+
+namespace {
+std::function<void()> gTestingDuringSaveHook;
+}  // namespace
+
+void ProjectManager::setTestingDuringSaveHook(std::function<void()> hook) {
+    gTestingDuringSaveHook = std::move(hook);
+}
 
 namespace {
 
@@ -215,11 +224,21 @@ bool ProjectManager::saveProjectAs(const juce::File& file) {
     newProject.name = projectName;
     newProject.touch();
 
+    // Snapshot the mutation generation after prep. If an edit lands while we
+    // write, the file still represents this older revision and must not clear
+    // the live dirty flag.
+    const auto revisionAtWrite = mutationRevision_;
+    if (gTestingDuringSaveHook)
+        gTestingDuringSaveHook();
+
     // Save to file
     if (!ProjectSerializer::saveToFile(actualFile, newProject)) {
         DBG("Failed to save project: " + ProjectSerializer::getLastError());
-        lastError_ =
-            "The project could not be saved. Please check disk space and file permissions.";
+        const auto detail = ProjectSerializer::getLastError();
+        lastError_ = detail.isNotEmpty()
+                         ? ("The project could not be saved. " + detail)
+                         : "The project could not be saved. Please check disk space and file "
+                           "permissions.";
         return false;
     }
 
@@ -230,7 +249,12 @@ bool ProjectManager::saveProjectAs(const juce::File& file) {
     isProjectOpen_ = true;
     mediaDirectory_ = targetMediaDir;
 
-    clearDirty();
+    if (mutationRevision_ == revisionAtWrite)
+        clearDirty();
+    else {
+        // Keep the project dirty so a later save captures the newer edits.
+        DBG("Project saved, but newer edits keep the document dirty");
+    }
     deleteAutosaveFile();
 
     if (!wasOpen) {
@@ -259,11 +283,10 @@ bool ProjectManager::loadProject(const juce::File& file,
     auto fileToLoad = file;
     auto autosaveFile = getAutosaveFile(file);
     if (autosaveFile.existsAsFile()) {
-        if (promptAutosaveRecovery(file)) {
+        if (shouldRecoverAutosave(file))
             fileToLoad = autosaveFile;
-        } else {
+        else
             autosaveFile.deleteFile();
-        }
     }
 
     // Stage first (file I/O + parse + validate)
@@ -429,12 +452,12 @@ void ProjectManager::loadProjectAsync(const juce::File& file,
         return;
     }
 
-    // Check for autosave recovery (modal dialog on message thread)
+    // Check for autosave recovery (message thread; may show a dialog unless overridden)
     auto fileToLoad = file;
     auto autosaveFile = getAutosaveFile(file);
     bool recoveredFromAutosave = false;
     if (autosaveFile.existsAsFile()) {
-        if (promptAutosaveRecovery(file)) {
+        if (shouldRecoverAutosave(file)) {
             fileToLoad = autosaveFile;
             recoveredFromAutosave = true;
         } else {
@@ -902,6 +925,17 @@ juce::File ProjectManager::getAutosaveFile(const juce::File& projectFile) {
     auto f = projectFile.getParentDirectory().getChildFile(projectFile.getFileName() +
                                                            kAutosaveExtension);
     return f.existsAsFile() ? f : juce::File();
+}
+
+bool ProjectManager::shouldRecoverAutosave(const juce::File& projectFile) {
+    // Headless / CI override: MAGDA_AUTOSAVE_RECOVER=1|recover or 0|discard.
+    // Empty policy keeps the interactive prompt used by the GUI.
+    const auto policy = juce::SystemStats::getEnvironmentVariable("MAGDA_AUTOSAVE_RECOVER", {});
+    if (policy == "1" || policy.equalsIgnoreCase("recover"))
+        return true;
+    if (policy == "0" || policy.equalsIgnoreCase("discard"))
+        return false;
+    return promptAutosaveRecovery(projectFile);
 }
 
 bool ProjectManager::promptAutosaveRecovery(const juce::File& projectFile) {
