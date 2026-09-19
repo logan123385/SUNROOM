@@ -8,6 +8,7 @@
 #include "../../agents/automation_parser.hpp"
 #include "../../agents/compact_parser.hpp"
 
+#include <functional>
 #include <optional>
 #include <vector>
 
@@ -386,6 +387,8 @@ StagedDslProposal captureDslProposal(const juce::String& dsl, const juce::String
                                      const std::vector<AutoInstruction>& automation = {});
 juce::String applyPendingDslProposal(MagdaApi& api, bool cancelled);
 const StagedDslProposal* pendingDslProposal();
+/// Console uses this to remember the MIDI clip created when a proposal is applied.
+void setAppliedMusicClipObserver(std::function<void(ClipId)> observer);
 /// Console `/dsl` and the DSL panel: run now. Does not stage a proposal.
 juce::String executeManualDsl(MagdaApi& api, const juce::String& dsl);
 /** One statement after SUNROOM_DSL:. Empty if the coach text has no staged action. */

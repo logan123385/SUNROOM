@@ -1249,6 +1249,16 @@ StagedDslProposal& pendingSlot() {
     return slot;
 }
 
+std::function<void(ClipId)>& appliedMusicClipObserver() {
+    static std::function<void(ClipId)> observer;
+    return observer;
+}
+
+void notifyAppliedMusicClip(ClipId clipId) {
+    if (appliedMusicClipObserver())
+        appliedMusicClipObserver()(clipId);
+}
+
 void nameGeneratedClip(ClipId clipId, const juce::String& description) {
     if (clipId < 0 || description.isEmpty())
         return;
@@ -1411,8 +1421,14 @@ juce::String applyPendingDslProposal(MagdaApi& api, bool cancelled) {
         return "Refused: " + why;
     }
     proposal.phase = ProposalPhase::Applied;
+    if (musicClipId >= 0)
+        notifyAppliedMusicClip(static_cast<ClipId>(musicClipId));
     const auto detail = results.isNotEmpty() ? results : juce::String("OK");
     return "Applied: " + detail;
+}
+
+void setAppliedMusicClipObserver(std::function<void(ClipId)> observer) {
+    appliedMusicClipObserver() = std::move(observer);
 }
 
 juce::File soundLibrary() {

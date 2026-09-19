@@ -128,7 +128,8 @@ void ProjectManager::joinBackgroundThread() {
 }
 
 void ProjectManager::invalidatePendingProjectCommit() {
-    joinBackgroundThread();
+    // Do not join here. The message thread would wait out an obsolete parse.
+    // The queued commit already compares this revision and skips itself.
     ++mutationRevision_;
 }
 
@@ -389,6 +390,7 @@ void ProjectManager::importDawProjectAsync(
     const auto importedDir = getImportedDirectory();
 
     // A commit already queued by the previous load must not apply after this one starts.
+    joinBackgroundThread();
     invalidatePendingProjectCommit();
 
     const auto startingRevision = mutationRevision_;
@@ -476,6 +478,7 @@ void ProjectManager::loadProjectAsync(const juce::File& file,
     auto fileCopy = fileToLoad;
 
     // A commit already queued by the previous load must not apply after this one starts.
+    joinBackgroundThread();
     invalidatePendingProjectCommit();
 
     const auto startingRevision = mutationRevision_;

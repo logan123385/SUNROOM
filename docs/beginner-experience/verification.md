@@ -29,7 +29,7 @@ Prior P1–P9 “PASS” lines below are historical CLI runs. They are not nativ
 | P5 Return to Arrangement | passed headless | `python3 scripts/verify_beginner_p5.py` on CLI sha256 `5227997b…1293`: active clip is Session playback; cleared clip is Arrangement. Headless scheduler absent. Deactivate called. No clip stopped. View not switched. |
 | P5 playback source | passed headless | `python3 scripts/verify_beginner_p5.py` on CLI sha256 `107c1788…93f3`: empty and aux say none; audio plus aux says Arrangement; session plus arrangement says mixed. Not shown on screen. |
 | P6 Analyze findings | passed headless | `python3 scripts/verify_beginner_p6.py` on CLI sha256 `53cbc75e…663f`: levels, peak, and one collision; `has-score no`. Button opens the offline modal in source. Modal not opened. Measurement not run. |
-| P7 remote pulse undo | passed headless | `python3 scripts/verify_beginner_p7.py` on CLI sha256 `779966f5…0d6e`: agent automation IR stages, volume points stay 0 until apply. No model loaded. Point writes are not an undo step. |
+| P7 remote pulse undo | passed headless | `python3 scripts/verify_beginner_p7.py` on CLI sha256 `779966f5…0d6e`: tempo 90.0 then `Undid: Set project tempo`; signature 7/8 then `Undid: Set time signature`, restored to the saved 4/4. Same run also staged automation: points 0 until apply. No model loaded. Point writes are not an undo step. |
 
 ## P9 curated media gate (ran 2026-09-18)
 

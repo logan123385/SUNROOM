@@ -14,7 +14,7 @@ Prepared 18 September 2026 from `Magda_DAW_Beginner_Feature_Gaps.pdf` and the cu
 
 The older `Magda_Cursor_Auto_Implementation_Plan.md` and `Magda_Cursor_Auto_Phase_Prompts.md` already translated the report into P0–P12. Subsequent work added many of those features. Use this document as the current execution guide, retaining those phase IDs and the older documents as background. Do not restart from an empty repository.
 
-The current `plan.md` calls P0–P9 complete. However, `progress.md` and `verification.md` explicitly leave native UI/audio, live model, audition, and other acceptance checks pending. Treat those phase labels as historical implementation checkpoints, **not release acceptance**. In P0, reconcile the tracker against the code and evidence instead of automatically starting at P10.
+The current `plan.md` marks P0–P9 partial or not started. The older tracker called those phases complete. `progress.md` and `verification.md` still leave native UI/audio, live model, audition, and other acceptance checks pending. Treat older complete labels as historical implementation checkpoints, **not release acceptance**. In P0, reconcile the tracker against the code and evidence instead of automatically starting at P10.
 
 This inspection read the ten-page PDF, visually inspected its rendered pages, inspected relevant source and scripts, and read existing records. It did not rebuild SUNROOM, launch its GUI, listen to audio, rerun the test suites, or make a live model/API request. Previously recorded passes must be attributed to those earlier runs until refreshed.
 

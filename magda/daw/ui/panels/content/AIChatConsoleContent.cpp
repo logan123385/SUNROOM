@@ -1124,9 +1124,15 @@ AIChatConsoleContent::AIChatConsoleContent() {
     controllerAgent_ = std::make_unique<magda::ControllerProfileAgent>();
     fourOscAgent_ = std::make_unique<magda::FourOscAgent>();
     themeAgent_ = std::make_unique<magda::ThemeAgent>();
+    magda::sunroom::setAppliedMusicClipObserver(
+        [safe = juce::Component::SafePointer<AIChatConsoleContent>(this)](magda::ClipId clipId) {
+            if (safe != nullptr)
+                safe->rememberGeneratedMidiClip(clipId);
+        });
 }
 
 AIChatConsoleContent::~AIChatConsoleContent() {
+    magda::sunroom::setAppliedMusicClipObserver({});
     magda::MixAnalysisService::getInstance().removeListener(this);
     magda::ViewModeController::getInstance().removeListener(this);
     outputModeButton_.setLookAndFeel(nullptr);

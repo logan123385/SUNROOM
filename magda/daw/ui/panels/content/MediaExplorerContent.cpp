@@ -1445,13 +1445,13 @@ void MediaExplorerContent::loadFileForPreview(const juce::File& file) {
     readerSource_.reset();
 
     if (!file.existsAsFile()) {
+        currentPreviewFile_ = juce::File();
         return;
     }
 
-    currentPreviewFile_ = file;
-
     auto* reader = formatManager_.createReaderFor(file);
     if (reader != nullptr) {
+        currentPreviewFile_ = file;
         // Read the rate off the reader before AudioFormatReaderSource takes ownership.
         const double fileSampleRate = reader->sampleRate;
 
@@ -1477,6 +1477,7 @@ void MediaExplorerContent::loadFileForPreview(const juce::File& file) {
             thumbnailComponent_->setFile(file);
         }
     } else {
+        currentPreviewFile_ = juce::File();
         playButton_->setEnabled(false);
         fileInfoLabel_.setText("Could not load: " + file.getFullPathName(),
                                juce::dontSendNotification);

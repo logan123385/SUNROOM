@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """P2 beginner gate: offline Fixture A insert, undo/redo, save/reopen."""
-import audioop
+import array
 import json
 import os
 import pathlib
@@ -93,11 +93,25 @@ near(tracks["Bass"]["volume"], 0.45)
 near(tracks["Chords"]["volume"], 0.35)
 assert tracks["Drums"]["devices"][0]["name"] == "Drum Grid"
 
+def pcm_peak(frames, sample_width):
+    if not frames:
+        return 0
+    if sample_width == 2:
+        samples = array.array("h")
+        samples.frombytes(frames)
+        return max(abs(sample) for sample in samples)
+    if sample_width == 4:
+        samples = array.array("i")
+        samples.frombytes(frames)
+        return max(abs(sample) for sample in samples)
+    raise AssertionError(f"unsupported sample width {sample_width}")
+
+
 wav = qa / "02-master.wav"
 call("02c-render", "render", composed, "--wav", wav, "--to", "2")
 with wave.open(str(wav)) as rendered:
     assert rendered.getnframes() > 0
-    peak = audioop.max(rendered.readframes(rendered.getnframes()), rendered.getsampwidth())
+    peak = pcm_peak(rendered.readframes(rendered.getnframes()), rendered.getsampwidth())
 assert peak > 1000, peak
 drums_notes = tracks["Drums"]["clips"][0].get("notes") or []
 assert any(n["note"] == 24 for n in drums_notes), "kick pad note 24 missing"
