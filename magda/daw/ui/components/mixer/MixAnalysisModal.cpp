@@ -11,34 +11,7 @@ namespace {
 // Render the measured data as a compact monospace summary: a per-track levels
 // table + the detected frequency collisions. This is the pre-agent data.
 juce::String formatFindings(const MixAnalysisData& in) {
-    auto col = [](juce::String s, int w) { return s.paddedRight(' ', w); };
-
-    juce::String out;
-    out << "LEVELS (" << static_cast<int>(in.tracks.size()) << " tracks)\n";
-    out << col("NAME", 16) << col("LUFS", 7) << col("PEAK", 7) << col("PLR", 6) << col("COR", 6)
-        << "WID\n";
-    auto line = [&](const juce::String& name, const MixAnalysisData::Track& t) {
-        out << col(name.substring(0, 15), 16) << col(juce::String(t.integratedLufs, 1), 7)
-            << col(juce::String(t.samplePeakDb, 1), 7) << col(juce::String(t.plr, 1), 6)
-            << col(juce::String(t.correlation, 2), 6) << juce::String(t.width, 2) << "\n";
-    };
-    for (const auto& t : in.tracks)
-        line(juce::String(t.name), t);
-    if (in.master)
-        line("[MASTER]", *in.master);
-
-    out << "\nCOLLISIONS (" << static_cast<int>(in.masking.size()) << ")\n";
-    if (in.masking.empty()) {
-        out << "  none detected\n";
-    } else {
-        for (const auto& m : in.masking) {
-            out << "  " << col(juce::String(m.a) + " vs " + juce::String(m.b), 26)
-                << juce::String(juce::roundToInt(m.loHz)) << "-"
-                << juce::String(juce::roundToInt(m.hiHz)) << " Hz   " << juce::String(m.severity, 2)
-                << "\n";
-        }
-    }
-    return out;
+    return juce::String(formatMixFindings(in));
 }
 
 }  // namespace

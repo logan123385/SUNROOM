@@ -49,6 +49,7 @@ class AutomationApi {
 
     virtual AutomationPointId addPoint(AutomationLaneId laneId, double beatPosition, double value,
                                        AutomationCurveType curveType) = 0;
+    /** Empty an absolute lane as one undoable step. Clip-based lanes are left alone. */
     virtual void clearLanePoints(AutomationLaneId laneId) = 0;
 
     /**
@@ -61,6 +62,17 @@ class AutomationApi {
      * covers.
      */
     virtual bool setLanePoints(AutomationLaneId laneId, std::vector<AutomationPoint> points) = 0;
+
+    /**
+     * Same write as setLanePoints. When removeLaneOnUndo is true the lane was
+     * created for this curve, so one undo removes the lane instead of leaving
+     * its seed point.
+     */
+    virtual bool setLanePoints(AutomationLaneId laneId, std::vector<AutomationPoint> points,
+                               bool removeLaneOnUndo) {
+        (void)removeLaneOnUndo;
+        return setLanePoints(laneId, std::move(points));
+    }
 
     /** Remove a lane and its clips. Undoable as one step. */
     virtual bool deleteLane(AutomationLaneId laneId) = 0;

@@ -16,6 +16,10 @@
 #include "project_api.hpp"
 #include "track_api.hpp"
 #include "transport_api.hpp"
+#include "undo_api.hpp"
+
+#include "../core/UndoManager.hpp"
+#include "../project/ProjectManager.hpp"
 
 namespace magda {
 
@@ -28,7 +32,34 @@ namespace {
 /// it is rounded rather than after.
 constexpr float kMaxSeekBars = static_cast<float>(TransportApi::kMaxBarOffset);
 
+class SetSurfaceTempoCommand final : public UndoableCommand {
+  public:
+    SetSurfaceTempoCommand(ProjectApi& project, double before, double after)
+        : project_(project), before_(before), after_(after) {}
+
+    void execute() override {
+        project_.setTempo(after_);
+    }
+    void undo() override {
+        project_.setTempo(before_);
+    }
+    juce::String getDescription() const override {
+        return "Set project tempo";
+    }
+
+  private:
+    ProjectApi& project_;
+    double before_;
+    double after_;
+};
+
 }  // namespace
+
+void applySurfaceTempo(MagdaApi& api, float bpm) {
+    const auto before = ProjectManager::getInstance().getCurrentProjectInfo().tempo;
+    api.undo().executeCommand(
+        std::make_unique<SetSurfaceTempoCommand>(api.project(), before, static_cast<double>(bpm)));
+}
 
 OscCommandSinkLive::OscCommandSinkLive(MagdaApi& api, std::unique_ptr<ControllerParamWriter> writer)
     : api_(api), writer_(std::move(writer)) {
@@ -93,9 +124,8 @@ void OscCommandSinkLive::apply(const OscCommand& command, float value) {
             api_.transport().setLoopEnabled(resolveToggle(value, api_.transport().isLoopEnabled()));
             return;
         case OscCommandKind::TransportTempo:
-            // The facade clamps against the project's real tempo range; a
-            // surface sending 0 or 5000 is not this layer's to reinterpret.
-            api_.project().setTempo(value);
+            // Same facade as the transport bar, recorded as undo. Not a staged proposal.
+            applySurfaceTempo(api_, value);
             return;
         case OscCommandKind::TransportPosition:
             api_.transport().setPositionBeats(value);

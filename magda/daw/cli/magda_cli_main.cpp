@@ -10,20 +10,36 @@
 #include <memory>
 #include <optional>
 #include <sstream>
+#include <thread>
 #include <vector>
 
+#include "api/automation_api.hpp"
 #include "api/clip_api.hpp"
 #include "api/magda_api.hpp"
 #include "api/project_api.hpp"
 #include "api/remote_api.hpp"
 #include "api/track_api.hpp"
 #include "audio/AudioBridge.hpp"
+#include "audio/midi/QwertyMidiKeyboard.hpp"
+#include "core/Config.hpp"
+#include "core/MixAnalysisData.hpp"
+#include "api/osc_command_sink_live.hpp"
+#include "api/remote_handlers.hpp"
+#include "ui/state/TimelineController.hpp"
+#include "ui/state/TimelineEvents.hpp"
+#include "core/PluginPreferences.hpp"
 #include "core/TrackManager.hpp"
 #include "core/ClipManager.hpp"
 #include "core/RackInfo.hpp"
 #include "core/SelectionManager.hpp"
 #include "core/UndoManager.hpp"
+#include "core/ViewModeController.hpp"
+#include "core/ViewModeState.hpp"
+#include "audio/session/SessionRecorder.hpp"
+#include "engine/TracktionEngineWrapper.hpp"
+#include "sunroom/MusicTheory.hpp"
 #include "sunroom/SunroomActions.hpp"
+#include "../../agents/console_agent_orchestrator.hpp"
 #include "../../agents/sunroom_mlx_client.hpp"
 #include "engine/AudioEngine.hpp"
 #include "project/ProjectInfo.hpp"
@@ -32,7 +48,14 @@
 
 namespace {
 
-void printUsage(std::ostream& out);
+int finishProcess(int code) {
+    std::cout.flush();
+    std::cerr.flush();
+    // Return through C++ destructors. HeadlessEngineSession drains queued
+    // plugin callbacks before the engine goes away; skipping that with
+    // std::_Exit left Drum Grid plugins to die inside MessageManager teardown.
+    return code;
+}
 
 juce::File fileFromArg(const juce::String& path) {
     if (juce::File::isAbsolutePath(path))
@@ -48,6 +71,24 @@ juce::File defaultOutputFor(const juce::File& input) {
 
 class HeadlessEngineSession {
   public:
+    ~HeadlessEngineSession() {
+        // Queued drum-grid callbacks hold a Plugin::Ptr. If that ref outlives the
+        // Edit, the plugin is destroyed later inside MessageManager teardown and
+        // Selectable::notifyListenersOfDeletion locks a dead critical section.
+        // Deliver those callbacks while the engine is still alive, then drop it.
+        if (engine_ != nullptr) {
+#if JUCE_MODAL_LOOPS_PERMITTED
+            if (auto* messages = juce::MessageManager::getInstanceWithoutCreating()) {
+                if (messages->isThisTheMessageThread()) {
+                    for (int pass = 0; pass < 4; ++pass)
+                        messages->runDispatchLoopUntil(50);
+                }
+            }
+#endif
+            engine_.reset();
+        }
+    }
+
     bool initialize() {
         engine_ = magda::createDefaultAudioEngine({.headless = true});
         if (!engine_->initialize()) {
@@ -158,6 +199,8 @@ juce::var trackToJson(magda::MagdaApi& api, const magda::TrackInfo& track) {
         auto* deviceObj = new juce::DynamicObject();
         deviceObj->setProperty("pluginId", device.pluginId);
         deviceObj->setProperty("name", device.name);
+        if (device.pluginState.isNotEmpty())
+            deviceObj->setProperty("pluginState", device.pluginState);
         devices.add(juce::var(deviceObj));
     }
     obj->setProperty("devices", devices);
@@ -205,20 +248,63 @@ class CommandDispatcher {
              &CommandDispatcher::placeScene},
             {"space-return", "space-return <sendLevel 0..1>", &CommandDispatcher::spaceReturn},
             {"propose-dsl", "propose-dsl <dsl>", &CommandDispatcher::proposeDsl},
+            {"direct-dsl", "direct-dsl <dsl>", &CommandDispatcher::directDsl},
+            {"agent-dsl-stage", "agent-dsl-stage <dsl>", &CommandDispatcher::agentDslStage},
+            {"agent-music-stage", "agent-music-stage <track-name>",
+             &CommandDispatcher::agentMusicStage},
+            {"agent-automation-stage", "agent-automation-stage",
+             &CommandDispatcher::agentAutomationStage},
+            {"agent-automation-clear", "agent-automation-clear",
+             &CommandDispatcher::agentAutomationClear},
+            {"agent-note-stage", "agent-note-stage", &CommandDispatcher::agentNoteStage},
             {"apply-proposal", "apply-proposal [cancelled]", &CommandDispatcher::applyProposal},
+            {"conductor-view", "conductor-view <create|session|arrange|mix>",
+             &CommandDispatcher::conductorView},
+            {"conductor-status", "conductor-status", &CommandDispatcher::conductorStatus},
+            {"coach-explain", "coach-explain <text>", &CommandDispatcher::coachExplain},
+            {"settings-recipe", "settings-recipe <mood> <root> <tempo> <bars>",
+             &CommandDispatcher::settingsRecipe},
+            {"apply-settings", "apply-settings", &CommandDispatcher::applySettings},
+            {"new-project", "new-project", &CommandDispatcher::newProject},
             {"select-track", "select-track <track-id>", &CommandDispatcher::selectTrack},
+            {"select-named-clip", "select-named-clip <name>", &CommandDispatcher::selectNamedClip},
             {"bump-revision", "bump-revision", &CommandDispatcher::bumpRevision},
             {"coach-status", "coach-status", &CommandDispatcher::coachStatus},
+            {"coach-prompts", "coach-prompts", &CommandDispatcher::coachPrompts},
+            {"coach-ask", "coach-ask <text> [--cancel-ms N]", &CommandDispatcher::coachAsk},
             {"coach-stage", "coach-stage <text>", &CommandDispatcher::coachStage},
+            {"coach-begin", "coach-begin", &CommandDispatcher::coachBegin},
+            {"coach-cancel", "coach-cancel", &CommandDispatcher::coachCancel},
+            {"coach-arrive", "coach-arrive <request-id> <text>", &CommandDispatcher::coachArrive},
+            {"export-song", "export-song <out.wav> [overwrite|cancel|preview]",
+             &CommandDispatcher::exportSong},
+            {"save-as", "save-as <out.mgd>", &CommandDispatcher::saveAsProject},
+            {"rename-track", "rename-track <old-name> <new-name>",
+             &CommandDispatcher::renameNamedTrack},
+            {"delete-named-track", "delete-named-track <name>",
+             &CommandDispatcher::deleteNamedTrack},
             {"library-query",
              "library-query <kind|-> <text|-> <key|-> <bpmMin|-> <bpmMax|->",
              &CommandDispatcher::libraryQuery},
             {"add-sample", "add-sample <filename.wav>", &CommandDispatcher::addSample},
+            {"preview-sample", "preview-sample <filename.wav>", &CommandDispatcher::previewSample},
+            {"mixer-presentation", "mixer-presentation", &CommandDispatcher::mixerPresentation},
+            {"editor-for-track", "editor-for-track <track-name>",
+             &CommandDispatcher::editorForTrack},
             {"create-and-play", "create-and-play", &CommandDispatcher::createAndPlay},
             {"create-song", "create-song", &CommandDispatcher::createSong},
             {"undo", "undo", &CommandDispatcher::undoLast},
             {"redo", "redo", &CommandDispatcher::redoLast},
             {"set-tempo", "set-tempo <bpm>", &CommandDispatcher::setTempo},
+            {"osc-tempo", "osc-tempo <bpm>", &CommandDispatcher::oscTempo},
+            {"timeline-tempo", "timeline-tempo <bpm>", &CommandDispatcher::timelineTempo},
+            {"timeline-signature", "timeline-signature <numerator> <denominator>",
+             &CommandDispatcher::timelineSignature},
+            {"set-time-signature", "set-time-signature <numerator> <denominator>",
+             &CommandDispatcher::setTimeSignature},
+            {"rack-bypass-undo", "rack-bypass-undo", &CommandDispatcher::rackBypassUndo},
+            {"rack-remove-undo", "rack-remove-undo", &CommandDispatcher::rackRemoveUndo},
+            {"rack-create-undo", "rack-create-undo", &CommandDispatcher::rackCreateUndo},
             {"add-track", "add-track <audio|group|aux|chord> [name]", &CommandDispatcher::addTrack},
             {"add-internal-instrument", "add-internal-instrument <track-id> <plugin-id> [name]",
              &CommandDispatcher::addInternalInstrument},
@@ -322,8 +408,26 @@ class CommandDispatcher {
             const auto reason = raw->failureReason().isNotEmpty()
                                     ? raw->failureReason()
                                     : juce::String("Fixture A failed");
-            // Failed commands must not remain undoable history.
             undo.discardLastCommand("Create beginner Fixture A");
+            const auto& info = magda::ProjectManager::getInstance().getCurrentProjectInfo();
+            std::cout << "Failed command not kept. Undo: '" << undo.getUndoDescription()
+                      << "' Redo: '" << undo.getRedoDescription() << "' tempo " << info.tempo
+                      << "\n";
+            for (const auto& track : tm.getTracks())
+                std::cout << "Remaining track " << track.name << "\n";
+            bool fixtureClip = false;
+            for (const auto& clip : cm.getClips())
+                fixtureClip = fixtureClip || clip.name.startsWith("Fixture A /");
+            std::cout << "Fixture clips remain: " << (fixtureClip ? "yes" : "no") << "\n";
+            if (undo.canRedo()) {
+                undo.redo();
+                bool resurrected = false;
+                for (const auto& clip : cm.getClips())
+                    resurrected = resurrected || clip.name.startsWith("Fixture A /");
+                std::cout << "Redo after failure: '" << undo.getUndoDescription()
+                          << "' fixture resurrected: " << (resurrected ? "yes" : "no") << "\n";
+                undo.undo();
+            }
             return fail(reason);
         }
 
@@ -480,8 +584,146 @@ class CommandDispatcher {
             return fail("propose-dsl requires <dsl>");
         const auto dsl = args[static_cast<int>(index++)];
         const auto proposal = magda::sunroom::captureDslProposal(dsl, "mocked specialist");
+        if (proposal.id == 0) {
+            const auto why = proposal.explanation.isNotEmpty()
+                                 ? proposal.explanation
+                                 : juce::String("Refused: proposal was not staged. Music is unchanged.");
+            return fail(why);
+        }
         std::cout << "Proposal " << static_cast<unsigned long long>(proposal.id) << " revision "
                   << static_cast<unsigned long long>(proposal.mutationRevision) << "\n";
+        return {};
+    }
+
+    CommandResult directDsl(const juce::StringArray& args, size_t& index) {
+        if (index >= static_cast<size_t>(args.size()))
+            return fail("direct-dsl requires <dsl>");
+        const auto dsl = args[static_cast<int>(index++)];
+        const auto line = magda::sunroom::executeManualDsl(engine_.getMagdaApi(), dsl);
+        if (line.startsWith("Error:"))
+            return fail(line);
+        const auto tempo = magda::ProjectManager::getInstance().getCurrentProjectInfo().tempo;
+        std::cout << "direct " << line << "\n";
+        std::cout << "proposal " << (magda::sunroom::pendingDslProposal() != nullptr ? "yes" : "no")
+                  << "\n";
+        std::cout << "tempo " << juce::String(tempo, 1) << "\n";
+        return {};
+    }
+
+    CommandResult agentDslStage(const juce::StringArray& args, size_t& index) {
+        if (index >= static_cast<size_t>(args.size()))
+            return fail("agent-dsl-stage requires <dsl>");
+        magda::agent::ConsoleRunOutput output;
+        output.dslCode = args[static_cast<int>(index++)].toStdString();
+        magda::agent::ConsoleAgentResultExecutor executor(engine_.getMagdaApi());
+        const auto execution = executor.execute(std::move(output));
+        const auto tempo = magda::ProjectManager::getInstance().getCurrentProjectInfo().tempo;
+        std::cout << execution.response << "\n";
+        std::cout << "proposal " << (magda::sunroom::pendingDslProposal() != nullptr ? "yes" : "no")
+                  << "\n";
+        if (juce::String(execution.response).startsWith("Refused:"))
+            return fail(execution.response);
+        std::cout << "tempo " << juce::String(tempo, 1) << "\n";
+        return {};
+    }
+
+    CommandResult agentMusicStage(const juce::StringArray& args, size_t& index) {
+        if (index >= static_cast<size_t>(args.size()))
+            return fail("agent-music-stage requires <track-name>");
+        const auto name = args[static_cast<int>(index++)];
+        magda::Instruction instruction;
+        instruction.opcode = magda::OpCode::Track;
+        instruction.payload = magda::TrackOp{name, {}};
+        magda::agent::ConsoleRunOutput output;
+        output.musicInstructions.push_back(instruction);
+        magda::agent::ConsoleAgentResultExecutor executor(engine_.getMagdaApi());
+        const auto execution = executor.execute(std::move(output));
+        bool found = false;
+        for (const auto& track : engine_.getMagdaApi().tracks().getTracks()) {
+            if (track.name == name)
+                found = true;
+        }
+        std::cout << execution.response << "\n";
+        std::cout << "proposal " << (magda::sunroom::pendingDslProposal() != nullptr ? "yes" : "no")
+                  << "\n";
+        std::cout << "track " << (found ? "yes" : "no") << "\n";
+        return {};
+    }
+
+    CommandResult agentAutomationStage(const juce::StringArray&, size_t&) {
+        magda::AutoShapeOp shape;
+        shape.shape = magda::AutoShape::Line;
+        shape.target.kind = magda::AutoTarget::Kind::TrackVolume;
+        shape.startBeat = 0.0;
+        shape.endBeat = 4.0;
+        shape.fromV = 0.0;
+        shape.toV = 1.0;
+        magda::AutoInstruction instruction;
+        instruction.payload = shape;
+        magda::agent::ConsoleRunOutput output;
+        output.automationInstructions.push_back(instruction);
+        magda::agent::ConsoleAgentResultExecutor executor(engine_.getMagdaApi());
+        const auto execution = executor.execute(std::move(output));
+        int points = 0;
+        const auto trackId = magda::SelectionManager::getInstance().getSelectedTrack();
+        if (trackId != magda::INVALID_TRACK_ID) {
+            auto& automation = engine_.getMagdaApi().automation();
+            for (const auto laneId : automation.getLanesForTrack(trackId)) {
+                if (const auto* lane = automation.getLane(laneId))
+                    points += static_cast<int>(lane->absolutePoints.size());
+            }
+        }
+        std::cout << execution.response << "\n";
+        std::cout << "proposal " << (magda::sunroom::pendingDslProposal() != nullptr ? "yes" : "no")
+                  << "\n";
+        std::cout << "points " << points << "\n";
+        return {};
+    }
+
+    CommandResult agentAutomationClear(const juce::StringArray&, size_t&) {
+        magda::AutoClearOp clear;
+        clear.target.kind = magda::AutoTarget::Kind::TrackVolume;
+        magda::AutoInstruction instruction;
+        instruction.payload = clear;
+        magda::agent::ConsoleRunOutput output;
+        output.automationInstructions.push_back(instruction);
+        magda::agent::ConsoleAgentResultExecutor executor(engine_.getMagdaApi());
+        const auto execution = executor.execute(std::move(output));
+        int points = 0;
+        const auto trackId = magda::SelectionManager::getInstance().getSelectedTrack();
+        if (trackId != magda::INVALID_TRACK_ID) {
+            auto& automation = engine_.getMagdaApi().automation();
+            for (const auto laneId : automation.getLanesForTrack(trackId)) {
+                if (const auto* lane = automation.getLane(laneId))
+                    points += static_cast<int>(lane->absolutePoints.size());
+            }
+        }
+        std::cout << execution.response << "\n";
+        std::cout << "proposal " << (magda::sunroom::pendingDslProposal() != nullptr ? "yes" : "no")
+                  << "\n";
+        std::cout << "points " << points << "\n";
+        return {};
+    }
+
+    CommandResult agentNoteStage(const juce::StringArray&, size_t&) {
+        magda::NoteOp note;
+        note.pitch = "C4";
+        note.beat = 0.0;
+        note.length = 1.0;
+        magda::Instruction instruction;
+        instruction.opcode = magda::OpCode::Note;
+        instruction.payload = note;
+        magda::agent::ConsoleRunOutput output;
+        output.musicInstructions.push_back(instruction);
+        magda::agent::ConsoleAgentResultExecutor executor(engine_.getMagdaApi());
+        const auto execution = executor.execute(std::move(output));
+        int clips = 0;
+        for (const auto& track : engine_.getMagdaApi().tracks().getTracks())
+            clips += static_cast<int>(engine_.getMagdaApi().clips().getClipsOnTrack(track.id).size());
+        std::cout << execution.response << "\n";
+        std::cout << "proposal " << (magda::sunroom::pendingDslProposal() != nullptr ? "yes" : "no")
+                  << "\n";
+        std::cout << "clips " << clips << "\n";
         return {};
     }
 
@@ -495,6 +737,140 @@ class CommandDispatcher {
         if (line.startsWith("Refused"))
             return fail(line);
         std::cout << line << "\n";
+        const auto* pending = magda::sunroom::pendingDslProposal();
+        if (pending != nullptr && pending->appliedMusicClip != magda::INVALID_CLIP_ID)
+            std::cout << "clip " << static_cast<int>(pending->appliedMusicClip) << "\n";
+        else
+            std::cout << "clip none\n";
+        if (pending != nullptr && pending->appliedDelta.isNotEmpty()) {
+            for (const auto& part : juce::StringArray::fromLines(pending->appliedDelta)) {
+                if (part.isNotEmpty())
+                    std::cout << "delta " << part << "\n";
+            }
+        } else {
+            std::cout << "delta none\n";
+        }
+        return {};
+    }
+
+    CommandResult conductorView(const juce::StringArray& args, size_t& index) {
+        if (index >= static_cast<size_t>(args.size()))
+            return fail("conductor-view requires <create|session|arrange|mix>");
+        const auto name = args[static_cast<int>(index++)];
+        magda::sunroom::ConductorView view = magda::sunroom::ConductorView::Create;
+        if (name == "create") {
+            view = magda::sunroom::ConductorView::Create;
+        } else if (name == "session") {
+            view = magda::sunroom::ConductorView::Session;
+            magda::ViewModeController::getInstance().setViewMode(magda::ViewMode::Live);
+        } else if (name == "arrange") {
+            view = magda::sunroom::ConductorView::Arrange;
+            magda::ViewModeController::getInstance().setViewMode(magda::ViewMode::Arrange);
+        } else if (name == "mix") {
+            view = magda::sunroom::ConductorView::Mix;
+            magda::ViewModeController::getInstance().setViewMode(magda::ViewMode::Mix);
+        } else {
+            return fail("conductor-view requires <create|session|arrange|mix>");
+        }
+        magda::sunroom::setConductorView(view);
+        std::cout << "view " << magda::sunroom::conductorViewName(view) << "\n";
+        return {};
+    }
+
+    CommandResult conductorStatus(const juce::StringArray&, size_t&) {
+        const auto& conductor = magda::sunroom::conductorState();
+        const auto* pending = magda::sunroom::pendingDslProposal();
+        std::cout << "session " << static_cast<unsigned long long>(conductor.projectSessionId)
+                  << "\n";
+        std::cout << "conversation " << conductor.conversationId << "\n";
+        std::cout << "view " << magda::sunroom::conductorViewName(conductor.view) << "\n";
+        std::cout << "proposal " << (pending != nullptr ? "yes" : "no") << "\n";
+        std::cout << "proposal-id "
+                  << (pending != nullptr ? static_cast<unsigned long long>(pending->id) : 0)
+                  << "\n";
+        std::cout << "plan " << (conductor.plan.isNotEmpty() ? conductor.plan : juce::String("none"))
+                  << "\n";
+        std::cout << "provider " << conductor.provider << "\n";
+        std::cout << "model " << conductor.model << "\n";
+        std::cout << "request " << static_cast<unsigned long long>(conductor.requestId) << "\n";
+        std::cout << "coach-request "
+                  << static_cast<unsigned long long>(conductor.coachRequestId) << "\n";
+        std::cout << "coach-flight " << (conductor.coachInFlight ? "yes" : "no") << "\n";
+        std::cout << "kind " << magda::sunroom::conductorReplyKindName(conductor.replyKind) << "\n";
+        std::cout << "settings "
+                  << (conductor.settingsApplied ? "applied"
+                      : conductor.settingsPending ? "pending"
+                                                 : "no")
+                  << "\n";
+        if (conductor.settingsPending || conductor.settingsApplied)
+            std::cout << "settings-tempo " << juce::String(conductor.settings.tempo, 1) << "\n";
+        return {};
+    }
+
+    CommandResult coachExplain(const juce::StringArray& args, size_t& index) {
+        if (index >= static_cast<size_t>(args.size()))
+            return fail("coach-explain requires <text>");
+        magda::sunroom::captureExplanation(args[static_cast<int>(index++)]);
+        const auto& conductor = magda::sunroom::conductorState();
+        std::cout << "kind " << magda::sunroom::conductorReplyKindName(conductor.replyKind) << "\n";
+        std::cout << "proposal "
+                  << (magda::sunroom::pendingDslProposal() != nullptr ? "yes" : "no") << "\n";
+        return {};
+    }
+
+    CommandResult settingsRecipe(const juce::StringArray& args, size_t& index) {
+        if (index + 3 >= static_cast<size_t>(args.size()))
+            return fail("settings-recipe requires <mood> <root> <tempo> <bars>");
+        auto mood = parseInt(args[static_cast<int>(index++)]);
+        auto root = parseInt(args[static_cast<int>(index++)]);
+        auto tempo = parseDouble(args[static_cast<int>(index++)]);
+        auto bars = parseInt(args[static_cast<int>(index++)]);
+        if (!mood || !root || !tempo || !bars)
+            return fail("settings-recipe requires <mood> <root> <tempo> <bars>");
+        magda::sunroom::ConductorSettings settings;
+        settings.mood = *mood;
+        settings.root = *root;
+        settings.tempo = *tempo;
+        settings.bars = *bars;
+        if (!magda::sunroom::captureSettingsRecipe(settings))
+            return fail("settings-recipe refused: a song edit is staged");
+        int tracks = 0;
+        for (const auto& track : engine_.getMagdaApi().tracks().getTracks()) {
+            juce::ignoreUnused(track);
+            ++tracks;
+        }
+        std::cout << "kind settings\n";
+        std::cout << "proposal "
+                  << (magda::sunroom::pendingDslProposal() != nullptr ? "yes" : "no") << "\n";
+        std::cout << "tracks " << tracks << "\n";
+        return {};
+    }
+
+    CommandResult applySettings(const juce::StringArray&, size_t&) {
+        const auto line = magda::sunroom::applySettingsRecipe();
+        if (line.startsWith("Refused"))
+            return fail(line);
+        int tracks = 0;
+        for (const auto& track : engine_.getMagdaApi().tracks().getTracks()) {
+            juce::ignoreUnused(track);
+            ++tracks;
+        }
+        std::cout << line << "\n";
+        std::cout << "proposal "
+                  << (magda::sunroom::pendingDslProposal() != nullptr ? "yes" : "no") << "\n";
+        std::cout << "tracks " << tracks << "\n";
+        const auto& conductor = magda::sunroom::conductorState();
+        std::cout << "settings-tempo " << juce::String(conductor.settings.tempo, 1) << "\n";
+        return {};
+    }
+
+    CommandResult newProject(const juce::StringArray&, size_t&) {
+        if (!magda::ProjectManager::getInstance().newProject())
+            return fail("new-project failed");
+        std::cout << "session "
+                  << static_cast<unsigned long long>(
+                         magda::ProjectManager::getInstance().projectSessionId())
+                  << "\n";
         return {};
     }
 
@@ -510,6 +886,24 @@ class CommandDispatcher {
         return {};
     }
 
+    CommandResult selectNamedClip(const juce::StringArray& args, size_t& index) {
+        if (index >= static_cast<size_t>(args.size()))
+            return fail("select-named-clip requires <name>");
+        const auto name = args[static_cast<int>(index++)];
+        const magda::ClipInfo* found = nullptr;
+        for (const auto& clip : magda::ClipManager::getInstance().getClips()) {
+            if (clip.name == name || clip.name.contains(name)) {
+                found = &clip;
+                break;
+            }
+        }
+        if (found == nullptr)
+            return fail("select-named-clip: no clip named " + name);
+        magda::SelectionManager::getInstance().selectClip(found->id);
+        std::cout << "Selected clip " << found->id << " " << found->name << "\n";
+        return {};
+    }
+
     CommandResult bumpRevision(const juce::StringArray&, size_t&) {
         magda::ProjectManager::getInstance().markDirty();
         std::cout << "Revision " << static_cast<unsigned long long>(
@@ -520,6 +914,107 @@ class CommandDispatcher {
 
     CommandResult coachStatus(const juce::StringArray&, size_t&) {
         std::cout << magda::SunroomMlxClient::localModelStatus() << "\n";
+        std::cout << magda::sunroom::formatSupportedCoachPrompts();
+        return {};
+    }
+
+    CommandResult coachPrompts(const juce::StringArray&, size_t&) {
+        std::cout << magda::sunroom::formatSupportedCoachPrompts();
+        return {};
+    }
+
+    CommandResult coachAsk(const juce::StringArray& args, size_t& index) {
+        int cancelMs = 0;
+        juce::StringArray words;
+        while (index < static_cast<size_t>(args.size())) {
+            const auto token = args[static_cast<int>(index)];
+            if (token == "--cancel-ms") {
+                ++index;
+                if (index >= static_cast<size_t>(args.size()))
+                    return fail("coach-ask --cancel-ms requires <ms>");
+                auto ms = parseInt(args[static_cast<int>(index++)]);
+                if (!ms || *ms < 0)
+                    return fail("coach-ask --cancel-ms requires <ms>");
+                cancelMs = *ms;
+                continue;
+            }
+            words.add(token);
+            ++index;
+        }
+        if (words.isEmpty())
+            return fail("coach-ask requires <text>");
+        const auto question = words.joinIntoString(" ");
+        const auto readiness = magda::SunroomMlxClient::localModelStatus();
+        std::cout << readiness << "\n";
+        if (readiness.contains("not installed"))
+            return fail(readiness);
+        std::cout << "provider this-mac-mlx\n";
+        magda::SunroomMlxClient::resetCoachCancellation();
+        const auto requestId = magda::sunroom::beginCoachRequest();
+        std::cout << "request " << static_cast<unsigned long long>(requestId) << "\n";
+        const auto context = magda::sunroom::coachContextPacket();
+        std::thread cancelThread;
+        if (cancelMs > 0) {
+            cancelThread = std::thread([cancelMs] {
+                juce::Thread::sleep(cancelMs);
+                magda::sunroom::cancelCoachRequest();
+                magda::SunroomMlxClient::cancelCoachRequests();
+            });
+        }
+        const auto result = magda::SunroomMlxClient::coach(question, context, 1, {}, {});
+        if (cancelThread.joinable())
+            cancelThread.join();
+        std::cout << "latency " << juce::String(result.wallSeconds, 2) << "\n";
+        const auto arrival = magda::sunroom::completeCoachRequest(
+            requestId, result.success ? result.text : juce::String());
+        if (!result.success)
+            std::cout << "error " << result.error << "\n";
+        else
+            std::cout << "answer " << result.text.replaceCharacter('\n', ' ') << "\n";
+        std::cout << arrival << "\n";
+        std::cout << "proposal "
+                  << (magda::sunroom::pendingDslProposal() != nullptr ? "yes" : "no") << "\n";
+        if (!arrival.startsWith("Refused"))
+            std::cout << "next-manual " << magda::sunroom::nextManualHintAfterCoach() << "\n";
+        magda::SunroomMlxClient::shutdown();
+        if (arrival.startsWith("Refused"))
+            return fail(arrival);
+        if (!result.success)
+            return fail(result.error);
+        return {};
+    }
+
+    CommandResult exportSong(const juce::StringArray& args, size_t& index) {
+        if (index >= static_cast<size_t>(args.size()))
+            return fail("export-song requires <out.wav>");
+        const auto dest = fileFromArg(args[static_cast<int>(index++)]);
+        bool overwrite = false;
+        bool cancel = false;
+        bool previewOnly = false;
+        while (index < static_cast<size_t>(args.size())) {
+            const auto flag = args[static_cast<int>(index)];
+            if (flag == "overwrite" || flag == "--overwrite") {
+                overwrite = true;
+                ++index;
+            } else if (flag == "cancel" || flag == "--cancel") {
+                cancel = true;
+                ++index;
+            } else if (flag == "preview" || flag == "--preview") {
+                previewOnly = true;
+                ++index;
+            } else {
+                break;
+            }
+        }
+        const auto plan = magda::sunroom::planExportSong(engine_, dest);
+        std::cout << plan.preview << "\n";
+        if (previewOnly)
+            return plan.refusal.isEmpty() ? CommandResult{} : fail(plan.refusal);
+        const auto error = magda::sunroom::runExportSong(engine_, dest, overwrite, cancel);
+        if (error.isNotEmpty())
+            return fail(error);
+        std::cout << "Exported " << dest.getFullPathName() << "\n";
+        std::cout << "reveal " << dest.getFullPathName() << "\n";
         return {};
     }
 
@@ -527,12 +1022,125 @@ class CommandDispatcher {
         if (index >= static_cast<size_t>(args.size()))
             return fail("coach-stage requires <text>");
         const auto text = args[static_cast<int>(index++)];
+        if (const auto why = magda::sunroom::modelActionRefusal(text); why.isNotEmpty()) {
+            std::cout << "proposal no\n";
+            return fail(why);
+        }
         const auto dsl = magda::sunroom::extractCoachDsl(text);
-        if (dsl.isEmpty())
+        if (dsl.isEmpty()) {
+            if (text.contains("SUNROOM_DSL:")) {
+                std::cout << "proposal no\n";
+                return fail("Refused: one step is not a song action. Music is unchanged.");
+            }
             return fail("Refused: coach text has no SUNROOM_DSL action. Music is unchanged.");
+        }
+        if (const auto why = magda::sunroom::missingDslTargetRefusal(dsl); why.isNotEmpty()) {
+            std::cout << "proposal no\n";
+            return fail(why);
+        }
+        if (const auto why = magda::sunroom::unsupportedActionRefusal(dsl); why.isNotEmpty()) {
+            std::cout << "proposal no\n";
+            return fail(why);
+        }
+        if (const auto why = magda::sunroom::incompleteActionRefusal(dsl); why.isNotEmpty()) {
+            std::cout << "proposal no\n";
+            return fail(why);
+        }
         const auto proposal = magda::sunroom::captureDslProposal(
             dsl, "Staged from coach text. Not applied until apply-proposal.");
+        if (proposal.id == 0) {
+            const auto why = proposal.explanation.isNotEmpty()
+                                 ? proposal.explanation
+                                 : juce::String("Refused: proposal was not staged. Music is unchanged.");
+            return fail(why);
+        }
         std::cout << "Staged " << static_cast<unsigned long long>(proposal.id) << " " << dsl << "\n";
+        return {};
+    }
+
+    CommandResult coachBegin(const juce::StringArray&, size_t&) {
+        const auto id = magda::sunroom::beginCoachRequest();
+        std::cout << "request " << static_cast<unsigned long long>(id) << "\n";
+        return {};
+    }
+
+    CommandResult coachCancel(const juce::StringArray&, size_t&) {
+        const auto line = magda::sunroom::cancelCoachRequest();
+        if (line.startsWith("Refused"))
+            return fail(line);
+        std::cout << line << "\n";
+        std::cout << "proposal " << (magda::sunroom::pendingDslProposal() != nullptr ? "yes" : "no")
+                  << "\n";
+        return {};
+    }
+
+    CommandResult coachArrive(const juce::StringArray& args, size_t& index) {
+        if (index + 1 >= static_cast<size_t>(args.size()))
+            return fail("coach-arrive requires <request-id> <text>");
+        auto id = parseInt(args[static_cast<int>(index)]);
+        if (!id) {
+            return fail("coach-arrive requires <request-id> <text>");
+        }
+        ++index;
+        const auto text = args[static_cast<int>(index++)];
+        const auto line = magda::sunroom::completeCoachRequest(static_cast<std::uint64_t>(*id), text);
+        std::cout << line << "\n";
+        std::cout << "proposal " << (magda::sunroom::pendingDslProposal() != nullptr ? "yes" : "no")
+                  << "\n";
+        if (line.startsWith("Refused"))
+            return fail(line);
+        return {};
+    }
+
+    CommandResult saveAsProject(const juce::StringArray& args, size_t& index) {
+        if (index >= static_cast<size_t>(args.size()))
+            return fail("save-as requires <out.mgd>");
+        const auto file = fileFromArg(args[static_cast<int>(index++)]);
+        if (!magda::ProjectManager::getInstance().saveProjectAs(file)) {
+            const auto why = magda::ProjectManager::getInstance().getLastError();
+            return fail(why.isNotEmpty() ? why : juce::String("save-as failed"));
+        }
+        std::cout << "Saved " << magda::ProjectManager::getInstance()
+                                      .getCurrentProjectFile()
+                                      .getFullPathName()
+                  << "\n";
+        return {};
+    }
+
+    CommandResult renameNamedTrack(const juce::StringArray& args, size_t& index) {
+        if (index + 1 >= static_cast<size_t>(args.size()))
+            return fail("rename-track requires <old-name> <new-name>");
+        const auto oldName = args[static_cast<int>(index++)];
+        const auto newName = args[static_cast<int>(index++)];
+        magda::TrackId found = magda::INVALID_TRACK_ID;
+        for (const auto& track : magda::TrackManager::getInstance().getTracks()) {
+            if (track.name == oldName) {
+                found = track.id;
+                break;
+            }
+        }
+        if (found == magda::INVALID_TRACK_ID)
+            return fail("Track not found: " + oldName);
+        magda::TrackManager::getInstance().setTrackName(found, newName);
+        std::cout << "renamed " << oldName << " " << newName << "\n";
+        return {};
+    }
+
+    CommandResult deleteNamedTrack(const juce::StringArray& args, size_t& index) {
+        if (index >= static_cast<size_t>(args.size()))
+            return fail("delete-named-track requires <name>");
+        const auto name = args[static_cast<int>(index++)];
+        magda::TrackId found = magda::INVALID_TRACK_ID;
+        for (const auto& track : magda::TrackManager::getInstance().getTracks()) {
+            if (track.name == name) {
+                found = track.id;
+                break;
+            }
+        }
+        if (found == magda::INVALID_TRACK_ID)
+            return fail("Track not found: " + name);
+        magda::TrackManager::getInstance().deleteTrack(found);
+        std::cout << "deleted " << name << "\n";
         return {};
     }
 
@@ -589,6 +1197,51 @@ class CommandDispatcher {
             return fail(reason);
         }
         std::cout << raw->summary() << "\n";
+        return {};
+    }
+
+    CommandResult previewSample(const juce::StringArray& args, size_t& index) {
+        if (index >= static_cast<size_t>(args.size()))
+            return fail("preview-sample requires <filename.wav>");
+        const auto name = args[static_cast<int>(index++)];
+        const auto note = magda::sunroom::describeStarterPreview(name);
+        if (note.isEmpty())
+            return fail("Starter sound was not found. Nothing was added.");
+        std::cout << note << " Headless playback is not this command.\n";
+        return {};
+    }
+
+    CommandResult mixerPresentation(const juce::StringArray&, size_t&) {
+        auto& config = magda::Config::getInstance();
+        config.beginGuidedMixerPresentation();
+        std::cout << config.guidedMixerPresentationReport() << "\n";
+        return {};
+    }
+
+    CommandResult editorForTrack(const juce::StringArray& args, size_t& index) {
+        if (index >= static_cast<size_t>(args.size()))
+            return fail("editor-for-track requires <track-name>");
+        const auto name = args[static_cast<int>(index++)];
+        magda::TrackId trackId = magda::INVALID_TRACK_ID;
+        for (const auto& track : magda::TrackManager::getInstance().getTracks()) {
+            if (track.name == name) {
+                trackId = track.id;
+                break;
+            }
+        }
+        if (trackId == magda::INVALID_TRACK_ID)
+            return fail("Track not found: " + name);
+        const auto* instrument =
+            magda::TrackManager::getInstance().getPrimaryInstrument(trackId);
+        if (instrument == nullptr) {
+            std::cout << "editor piano-roll identifier none\n";
+            return {};
+        }
+        const auto identifier = magda::PluginPreferences::identifierForDevice(*instrument);
+        const bool drumGrid =
+            magda::PluginPreferences::getInstance().prefersDrumGrid(identifier);
+        std::cout << "editor " << (drumGrid ? "drum-grid" : "piano-roll") << " identifier "
+                  << identifier << "\n";
         return {};
     }
 
@@ -670,7 +1323,179 @@ class CommandDispatcher {
         if (!bpm || *bpm <= 0.0)
             return fail("set-tempo requires a positive numeric bpm");
 
-        engine_.getMagdaApi().project().setTempo(*bpm);
+        auto* input = new juce::DynamicObject();
+        input->setProperty("tempo", *bpm);
+        const auto result = magda::remote::handlers::projectSetTempo(
+            engine_.getMagdaApi(), juce::var(input), {});
+        if (result.error.has_value())
+            return fail(result.error->message);
+        const auto tempo = magda::ProjectManager::getInstance().getCurrentProjectInfo().tempo;
+        std::cout << "tempo " << juce::String(tempo, 1) << " undo "
+                  << magda::UndoManager::getInstance().getUndoDescription() << "\n";
+        return {};
+    }
+
+    CommandResult oscTempo(const juce::StringArray& tokens, size_t& index) {
+        if (index >= static_cast<size_t>(tokens.size()))
+            return fail("osc-tempo requires <bpm>");
+        auto bpm = parseDouble(tokens[static_cast<int>(index++)]);
+        if (!bpm || *bpm <= 0.0)
+            return fail("osc-tempo requires a positive numeric bpm");
+
+        magda::applySurfaceTempo(engine_.getMagdaApi(), static_cast<float>(*bpm));
+        const auto tempo = magda::ProjectManager::getInstance().getCurrentProjectInfo().tempo;
+        std::cout << "osc-tempo " << juce::String(tempo, 1) << " undo "
+                  << magda::UndoManager::getInstance().getUndoDescription() << "\n";
+        return {};
+    }
+
+    CommandResult timelineTempo(const juce::StringArray& tokens, size_t& index) {
+        if (index >= static_cast<size_t>(tokens.size()))
+            return fail("timeline-tempo requires <bpm>");
+        auto bpm = parseDouble(tokens[static_cast<int>(index++)]);
+        if (!bpm || *bpm <= 0.0)
+            return fail("timeline-tempo requires a positive numeric bpm");
+
+        magda::TimelineController timeline;
+        timeline.dispatch(magda::SetTempoEvent{*bpm});
+        const auto tempo = magda::ProjectManager::getInstance().getCurrentProjectInfo().tempo;
+        std::cout << "timeline-tempo " << juce::String(tempo, 1) << " undo "
+                  << magda::UndoManager::getInstance().getUndoDescription() << "\n";
+        return {};
+    }
+
+    CommandResult timelineSignature(const juce::StringArray& tokens, size_t& index) {
+        if (index + 1 >= static_cast<size_t>(tokens.size()))
+            return fail("timeline-signature requires <numerator> <denominator>");
+        auto numerator = parseInt(tokens[static_cast<int>(index++)]);
+        auto denominator = parseInt(tokens[static_cast<int>(index++)]);
+        if (!numerator || !denominator || *numerator <= 0 || *denominator <= 0)
+            return fail("timeline-signature requires positive integers");
+
+        magda::TimelineController timeline;
+        timeline.dispatch(magda::SetTimeSignatureEvent{*numerator, *denominator});
+        const auto& info = magda::ProjectManager::getInstance().getCurrentProjectInfo();
+        std::cout << "timeline-signature " << info.timeSignatureNumerator << "/"
+                  << info.timeSignatureDenominator << " undo "
+                  << magda::UndoManager::getInstance().getUndoDescription() << "\n";
+        return {};
+    }
+
+    CommandResult setTimeSignature(const juce::StringArray& tokens, size_t& index) {
+        if (index + 1 >= static_cast<size_t>(tokens.size()))
+            return fail("set-time-signature requires <numerator> <denominator>");
+        auto numerator = parseInt(tokens[static_cast<int>(index++)]);
+        auto denominator = parseInt(tokens[static_cast<int>(index++)]);
+        if (!numerator || !denominator || *numerator <= 0 || *denominator <= 0)
+            return fail("set-time-signature requires positive integers");
+
+        auto* input = new juce::DynamicObject();
+        input->setProperty("numerator", *numerator);
+        input->setProperty("denominator", *denominator);
+        const auto result = magda::remote::handlers::projectSetTimeSignature(
+            engine_.getMagdaApi(), juce::var(input), {});
+        if (result.error.has_value())
+            return fail(result.error->message);
+        const auto& info = magda::ProjectManager::getInstance().getCurrentProjectInfo();
+        std::cout << "signature " << info.timeSignatureNumerator << "/"
+                  << info.timeSignatureDenominator << " undo "
+                  << magda::UndoManager::getInstance().getUndoDescription() << "\n";
+        return {};
+    }
+
+    CommandResult rackBypassUndo(const juce::StringArray&, size_t&) {
+        const auto tracks = magda::TrackManager::getInstance().getTracks();
+        if (tracks.empty())
+            return fail("rack-bypass-undo needs a track");
+        const auto trackId = tracks.front().id;
+        auto* created = new juce::DynamicObject();
+        created->setProperty("trackId", static_cast<int>(trackId));
+        created->setProperty("name", "Bypass Test");
+        const auto createdResult = magda::remote::handlers::racksCreate(
+            engine_.getMagdaApi(), juce::var(created), {});
+        if (createdResult.error.has_value())
+            return fail(createdResult.error->message);
+        const int rackId = static_cast<int>(createdResult.value["id"]);
+        auto* input = new juce::DynamicObject();
+        input->setProperty("trackId", static_cast<int>(trackId));
+        input->setProperty("rackId", rackId);
+        input->setProperty("bypassed", true);
+        const auto result = magda::remote::handlers::racksSetBypassed(
+            engine_.getMagdaApi(), juce::var(input), {});
+        if (result.error.has_value())
+            return fail(result.error->message);
+        std::cout << "bypass 1 undo " << magda::UndoManager::getInstance().getUndoDescription()
+                  << "\n";
+        if (!magda::UndoManager::getInstance().undo())
+            return fail("rack bypass undo failed");
+        const auto* rack = engine_.getMagdaApi().tracks().getRack(
+            trackId, static_cast<magda::RackId>(rackId));
+        if (rack == nullptr || rack->bypassed)
+            return fail("rack bypass undo did not restore");
+        std::cout << "restored 0\n";
+        return {};
+    }
+
+    CommandResult rackRemoveUndo(const juce::StringArray&, size_t&) {
+        const auto tracks = magda::TrackManager::getInstance().getTracks();
+        if (tracks.empty())
+            return fail("rack-remove-undo needs a track");
+        const auto trackId = tracks.front().id;
+        auto* created = new juce::DynamicObject();
+        created->setProperty("trackId", static_cast<int>(trackId));
+        created->setProperty("name", "Remove Test");
+        const auto createdResult = magda::remote::handlers::racksCreate(
+            engine_.getMagdaApi(), juce::var(created), {});
+        if (createdResult.error.has_value())
+            return fail(createdResult.error->message);
+        const int rackId = static_cast<int>(createdResult.value["id"]);
+        auto* input = new juce::DynamicObject();
+        input->setProperty("trackId", static_cast<int>(trackId));
+        input->setProperty("rackId", rackId);
+        const auto removed = magda::remote::handlers::racksRemove(
+            engine_.getMagdaApi(), juce::var(input), {});
+        if (removed.error.has_value())
+            return fail(removed.error->message);
+        if (engine_.getMagdaApi().tracks().getRack(trackId, static_cast<magda::RackId>(rackId)) !=
+            nullptr)
+            return fail("rack remove left the rack in place");
+        std::cout << "removed undo " << magda::UndoManager::getInstance().getUndoDescription()
+                  << "\n";
+        if (!magda::UndoManager::getInstance().undo())
+            return fail("rack remove undo failed");
+        const auto* rack = engine_.getMagdaApi().tracks().getRack(
+            trackId, static_cast<magda::RackId>(rackId));
+        if (rack == nullptr || rack->name != "Remove Test")
+            return fail("rack remove undo did not restore the rack");
+        std::cout << "restored Remove Test\n";
+        return {};
+    }
+
+    CommandResult rackCreateUndo(const juce::StringArray&, size_t&) {
+        const auto tracks = magda::TrackManager::getInstance().getTracks();
+        if (tracks.empty())
+            return fail("rack-create-undo needs a track");
+        const auto trackId = tracks.front().id;
+        auto* created = new juce::DynamicObject();
+        created->setProperty("trackId", static_cast<int>(trackId));
+        created->setProperty("name", "Create Test");
+        const auto createdResult = magda::remote::handlers::racksCreate(
+            engine_.getMagdaApi(), juce::var(created), {});
+        if (createdResult.error.has_value())
+            return fail(createdResult.error->message);
+        const int rackId = static_cast<int>(createdResult.value["id"]);
+        const auto* rack = engine_.getMagdaApi().tracks().getRack(
+            trackId, static_cast<magda::RackId>(rackId));
+        if (rack == nullptr || rack->name != "Create Test")
+            return fail("rack create did not add the rack");
+        std::cout << "created Create Test undo "
+                  << magda::UndoManager::getInstance().getUndoDescription() << "\n";
+        if (!magda::UndoManager::getInstance().undo())
+            return fail("rack create undo failed");
+        if (engine_.getMagdaApi().tracks().getRack(trackId, static_cast<magda::RackId>(rackId)) !=
+            nullptr)
+            return fail("rack create undo left the rack in place");
+        std::cout << "undo removed\n";
         return {};
     }
 
@@ -1049,6 +1874,15 @@ void printUsage(std::ostream& out) {
         << "  magda-cli run <project.mgd> --cmds <cmds.txt> [--out <out.mgd>] [--dump-json]\n"
         << "  magda-cli exec <project.mgd> <commands...> [--out <out.mgd>] [--dump-json]\n"
         << "  magda-cli render <project.mgd> --wav <out.wav> [--from <time>] [--to <time>]\n"
+        << "  magda-cli export-song <project.mgd> --wav <out.wav> [--overwrite|--cancel|--preview]\n"
+        << "  magda-cli keyboard-play-focus\n"
+        << "  magda-cli scale-lock-insert\n"
+        << "  magda-cli keyboard-note-release\n"
+        << "  magda-cli capture-vs-place\n"
+        << "  magda-cli place-scene-default\n"
+        << "  magda-cli return-to-arrangement\n"
+        << "  magda-cli playback-source\n"
+        << "  magda-cli analyze-findings\n"
         << "\n"
         << "Commands:\n";
 
@@ -1265,8 +2099,7 @@ int runCli(const RunOptions& options) {
 
     // Skip JUCE/Tracktion static teardown in this headless CLI process after a
     // successful durable save (destructor path currently SIGSEGVs on exit).
-    std::cout.flush();
-    std::_Exit(0);
+    return finishProcess(0);
 }
 
 int initProject(const juce::StringArray& args) {
@@ -1292,8 +2125,7 @@ int initProject(const juce::StringArray& args) {
 
     // Avoid Tracktion/JUCE teardown crashes in this headless CLI build when the
     // process exits after a successful save. The project file is already durable.
-    std::cout.flush();
-    std::_Exit(0);
+    return finishProcess(0);
 }
 
 int runRoundTrip(const juce::StringArray& args) {
@@ -1420,6 +2252,63 @@ int renderProject(const juce::StringArray& args) {
     return renderWav(session.engine(), options) ? 0 : 1;
 }
 
+int exportSongProject(const juce::StringArray& args) {
+    if (args.size() < 4) {
+        printUsage(std::cerr);
+        return 2;
+    }
+
+    const auto input = fileFromArg(args[1]);
+    juce::File wavOutput;
+    bool overwrite = false;
+    bool cancel = false;
+    bool previewOnly = false;
+    for (int i = 2; i < args.size(); ++i) {
+        if (args[i] == "--wav") {
+            if (++i >= args.size()) {
+                std::cerr << "export-song requires --wav <out.wav>\n";
+                return 2;
+            }
+            wavOutput = fileFromArg(args[i]);
+        } else if (args[i] == "--overwrite") {
+            overwrite = true;
+        } else if (args[i] == "--cancel") {
+            cancel = true;
+        } else if (args[i] == "--preview") {
+            previewOnly = true;
+        } else {
+            printUsage(std::cerr);
+            return 2;
+        }
+    }
+    if (wavOutput.getFullPathName().isEmpty()) {
+        std::cerr << "export-song requires --wav <out.wav>\n";
+        return 2;
+    }
+
+    HeadlessEngineSession session;
+    if (!session.initialize()) {
+        std::cerr << session.error() << "\n";
+        return 1;
+    }
+    if (!loadProjectForCli(input, session))
+        return 1;
+
+    const auto plan = magda::sunroom::planExportSong(session.engine(), wavOutput);
+    std::cout << plan.preview << "\n";
+    if (previewOnly)
+        return plan.refusal.isEmpty() ? 0 : 1;
+    const auto error =
+        magda::sunroom::runExportSong(session.engine(), wavOutput, overwrite, cancel);
+    if (error.isNotEmpty()) {
+        std::cerr << error << "\n";
+        return 1;
+    }
+    std::cout << "Exported " << wavOutput.getFullPathName() << "\n";
+    std::cout << "reveal " << wavOutput.getFullPathName() << "\n";
+    return 0;
+}
+
 int execCommands(const juce::StringArray& args) {
     if (args.size() < 3) {
         printUsage(std::cerr);
@@ -1460,11 +2349,168 @@ int bootOnly() {
     }
 
     std::cout << "MAGDA engine booted headless\n";
-    std::cout.flush();
-    std::_Exit(0);
+    return finishProcess(0);
+}
+
+int captureVsPlace() {
+    HeadlessEngineSession session;
+    if (!session.initialize()) {
+        std::cerr << session.error() << "\n";
+        return finishProcess(1);
+    }
+    auto* wrapper = dynamic_cast<magda::TracktionEngineWrapper*>(&session.engine());
+    if (wrapper == nullptr || !wrapper->isHeadlessRuntime()) {
+        std::cerr << "capture-vs-place expected a headless engine\n";
+        return finishProcess(1);
+    }
+    std::cout << "capture-start launch " << magda::captureArrangementStartSeconds(0.0, 1.5)
+              << "\n";
+    std::cout << "capture-start transport " << magda::captureArrangementStartSeconds(3.5, 0.0)
+              << "\n";
+    std::cout << "headless-recorder no\n";
+    std::cout << "place-scene copies clips to a chosen beat. Not this command.\n";
+    return finishProcess(0);
+}
+
+int placeSceneDefault() {
+    const auto beat = [](double loopEnd) {
+        return juce::String(magda::sunroom::beginnerPlaceSceneBeat(loopEnd), 0);
+    };
+    std::cout << "scene " << magda::sunroom::beginnerPlaceSceneIndex() << "\n";
+    std::cout << "loop 100 beat " << beat(100.0) << "\n";
+    std::cout << "loop 128 beat " << beat(128.0) << "\n";
+    std::cout << "loop 160 beat " << beat(160.0) << "\n";
+    return 0;
+}
+
+int returnToArrangement() {
+    const auto name = [](magda::TrackPlaybackMode mode) {
+        return mode == magda::TrackPlaybackMode::Session ? "Session" : "Arrangement";
+    };
+    std::cout << "clip-set " << name(magda::playbackModeForActiveSessionClip(1)) << "\n";
+    std::cout << "clip-cleared " << name(magda::playbackModeForActiveSessionClip(magda::INVALID_CLIP_ID))
+              << "\n";
+
+    HeadlessEngineSession session;
+    if (!session.initialize()) {
+        std::cerr << session.error() << "\n";
+        return finishProcess(1);
+    }
+    auto* wrapper = dynamic_cast<magda::TracktionEngineWrapper*>(&session.engine());
+    if (wrapper == nullptr || !wrapper->isHeadlessRuntime()) {
+        std::cerr << "return-to-arrangement expected a headless engine\n";
+        return finishProcess(1);
+    }
+    session.engine().deactivateAllSessionClips();
+    std::cout << "headless-scheduler no\n";
+    std::cout << "deactivate-called\n";
+    return finishProcess(0);
+}
+
+int playbackSourceReport() {
+    const auto report = [](const char* name, const std::vector<magda::TrackInfo>& tracks) {
+        std::cout << name << " " << magda::sunroom::playbackSourceSummaryFor(tracks) << "\n";
+    };
+    magda::TrackInfo audio;
+    audio.type = magda::TrackType::Audio;
+    audio.playbackMode = magda::TrackPlaybackMode::Arrangement;
+    magda::TrackInfo session = audio;
+    session.playbackMode = magda::TrackPlaybackMode::Session;
+    magda::TrackInfo aux;
+    aux.type = magda::TrackType::Aux;
+    aux.playbackMode = magda::TrackPlaybackMode::Arrangement;
+
+    report("empty", {});
+    report("aux", {aux});
+    report("arrangement", {audio, aux});
+    report("mixed", {session, audio, aux});
+    return 0;
+}
+
+int analyzeFindings() {
+    magda::MixAnalysisData data;
+    magda::MixAnalysisData::Track track;
+    track.name = "Drums";
+    track.integratedLufs = -14.2f;
+    track.samplePeakDb = -1.1f;
+    data.tracks.push_back(track);
+    magda::MixAnalysisData::MaskingPair pair;
+    pair.a = "Drums";
+    pair.b = "Bass";
+    pair.loHz = 80.0f;
+    pair.hiHz = 200.0f;
+    pair.severity = 0.42f;
+    data.masking.push_back(pair);
+    const auto text = magda::formatMixFindings(data);
+    const bool scored = text.find("score") != std::string::npos || text.find("health") != std::string::npos;
+    std::cout << text;
+    std::cout << "has-score " << (scored ? "yes" : "no") << "\n";
+    return 0;
 }
 
 }  // namespace
+
+int keyboardPlayFocus() {
+    juce::TextEditor editor;
+    juce::Component insideEditor;
+    editor.addAndMakeVisible(insideEditor);
+    juce::Label editableLabel;
+    editableLabel.setEditable(true);
+    juce::Label fixedLabel;
+    fixedLabel.setEditable(false);
+    juce::Component plain;
+
+    const auto report = [](const char* name, juce::Component* focused) {
+        std::cout << name
+                  << (magda::keyboardPlayYieldsToTyping(focused) ? " yield\n" : " yield-no\n");
+    };
+    report("none", nullptr);
+    report("text-editor", &editor);
+    report("child-of-text-editor", &insideEditor);
+    report("editable-label", &editableLabel);
+    report("fixed-label", &fixedLabel);
+    report("plain", &plain);
+    return 0;
+}
+
+int scaleLockInsert() {
+    constexpr int clicked = 10;  // A#. Out of A natural minor (root 9, mood 1).
+    constexpr int root = 9;
+    constexpr int mood = 1;
+    const auto line = [](const char* name, bool lock, bool guide, bool drumGrid) {
+        const int note = magda::sunroom::scaleLockedInsertNote(clicked, lock, guide, root, mood,
+                                                               drumGrid);
+        std::cout << name << " " << clicked << " -> " << note << "\n";
+    };
+    line("pitched", true, true, false);
+    line("drum-grid", true, true, true);
+    line("lock-off", false, true, false);
+    line("no-guide", true, false, false);
+    return 0;
+}
+
+int keyboardNoteRelease() {
+    juce::Component window;
+    juce::Component inside;
+    window.addAndMakeVisible(inside);
+    juce::TextEditor editor;
+    window.addAndMakeVisible(editor);
+    juce::Component outside;
+
+    const auto report = [](const char* name, juce::Component* focused, juce::Component* top) {
+        std::unordered_set<int> held{60, 64};
+        const bool release = magda::keyboardPlayReleasesHeldNotes(focused, top);
+        if (release)
+            magda::takeHeldKeyboardNotes(held);
+        std::cout << name << (release ? " release" : " keep") << " held " << held.size() << "\n";
+    };
+    report("typing", &editor, &window);
+    report("inside", &inside, &window);
+    report("outside", &outside, &window);
+    report("none", nullptr, &window);
+    report("no-window", &inside, nullptr);
+    return 0;
+}
 
 int main(int argc, char* argv[]) {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -1491,6 +2537,24 @@ int main(int argc, char* argv[]) {
         return execCommands(args);
     if (command == "render")
         return renderProject(args);
+    if (command == "export-song")
+        return exportSongProject(args);
+    if (command == "keyboard-play-focus")
+        return keyboardPlayFocus();
+    if (command == "scale-lock-insert")
+        return scaleLockInsert();
+    if (command == "keyboard-note-release")
+        return keyboardNoteRelease();
+    if (command == "capture-vs-place")
+        return captureVsPlace();
+    if (command == "place-scene-default")
+        return placeSceneDefault();
+    if (command == "return-to-arrangement")
+        return returnToArrangement();
+    if (command == "playback-source")
+        return playbackSourceReport();
+    if (command == "analyze-findings")
+        return analyzeFindings();
 
     std::cerr << "Unknown command: " << command << "\n";
     printUsage(std::cerr);

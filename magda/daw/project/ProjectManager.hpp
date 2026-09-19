@@ -216,6 +216,14 @@ class ProjectManager : private juce::Timer {
         return mutationRevision_;
     }
 
+    /**
+     * Identifies this open song for the conductor. Two unsaved projects can
+     * share an empty path, so proposal state is keyed by this id, not the path.
+     */
+    std::uint64_t projectSessionId() const {
+        return projectSessionId_;
+    }
+
     // ========================================================================
     // Listeners
     // ========================================================================
@@ -364,6 +372,10 @@ class ProjectManager : private juce::Timer {
     ~ProjectManager();
 
     void joinBackgroundThread();
+    /// Join the load worker, then bump the revision. Joining does not cancel a
+    /// commit already queued on the message thread.
+    void invalidatePendingProjectCommit();
+    void beginProjectSession();
     void timerCallback() override;
     void performAutosave();
     void deleteAutosaveFile();
@@ -378,6 +390,7 @@ class ProjectManager : private juce::Timer {
     bool autoSaveEnabled_ = true;
     int undoableMutationDepth_ = 0;
     std::uint64_t mutationRevision_ = 0;
+    std::uint64_t projectSessionId_ = 1;
 
     std::vector<ProjectManagerListener*> listeners_;
     juce::String lastError_;

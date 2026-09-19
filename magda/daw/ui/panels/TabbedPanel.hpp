@@ -75,6 +75,11 @@ class TabbedPanel : public juce::Component, public PanelStateListener {
         return activeContent_;
     }
 
+    /** Create the panel content if needed. Does not switch the visible tab. */
+    PanelContent* ensureContent(PanelContentType type) {
+        return getOrCreateContent(type);
+    }
+
   protected:
     /**
      * @brief Override to customize background painting

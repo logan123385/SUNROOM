@@ -219,24 +219,47 @@ SunroomStudio::SunroomStudio(AudioEngine* engine) : engine_(engine) {
           &applyRecipe_, &applySuggestion_, &cancelSuggestion_, &hearBefore_, &hearAfter_,
           &saveKey_})
         addAndMakeVisible(button);
+    {
+        const auto prompts = supportedCoachPrompts();
+        for (int i = 0; i < static_cast<int>(coachPromptButtons_.size()); ++i) {
+            auto& button = coachPromptButtons_[static_cast<size_t>(i)];
+            addAndMakeVisible(button);
+            if (i < static_cast<int>(prompts.size()))
+                button.setButtonText(prompts[static_cast<size_t>(i)].label);
+            button.onClick = [this, i] {
+                const auto current = supportedCoachPrompts();
+                if (i >= static_cast<int>(current.size()) || !current[static_cast<size_t>(i)].enabled)
+                    return;
+                prompt_.setText(current[static_cast<size_t>(i)].label);
+            };
+        }
+    }
     create_.setName("primary");
     play_.setName("primary");
     ask_.setName("primary");
-    create_.setTooltip("Create editable drums, bass and chords, then play. Cmd-Z undoes the whole "
-                       "addition. Rapid clicks will not double-insert.");
-    journey_.setTooltip("Optional SUNROOM mood journey using the feeling controls below.");
+    create_.setTooltip(
+        "Fixed 8-bar Arrangement loop: A natural minor, 100 BPM, 4/4. Not a Session scene. "
+        "Does not use feeling, home note, or pace. Cmd-Z undoes the whole addition.");
+    journey_.setTooltip(
+        "Uses the feeling, home note, pace, length, and atmosphere controls. Create and Play does "
+        "not.");
     skipGuide_.setTooltip("Skip the guided studio and open Full studio.");
-    makeBeat_.setTooltip("Open the Drum Grid clip so you can change a step.");
-    addChords_.setTooltip("Open the Chords clip in the note editor.");
-    playSound_.setTooltip("Open the Bass clip and turn on computer keyboard play.");
+    makeBeat_.setTooltip(
+        "Selects the Drums clip. Drum Grid opens because the drumgrid plugin prefers that editor.");
+    addChords_.setTooltip(
+        "Selects the Chords clip. Chord Engine is on that track, in front of the polysynth that "
+        "makes the sound.");
+    playSound_.setTooltip(
+        "Selects the Sound clip and turns on computer keyboard play. A Sampler is loaded with "
+        "Glass mote 01. The Bass polysynth stays on the Bass track.");
     captureJam_.setTooltip(
         "Arm real Session→Arrangement capture (transport Record). Launch clips while armed; stop "
         "recording to commit timed performance. Not a static scene copy.");
     placeScene_.setTooltip(
-        "Deterministically place the first scene's Session clips into an empty arrangement range "
-        "(after the loop). Distinct from Capture Jam.");
+        "Copies the first scene to beat 128, or later if the loop is longer. Not Capture Jam.");
     returnArrange_.setTooltip(
-        "Return tracks from Session override to Arrangement playback at the engine boundary.");
+        "Stops session clips and returns those tracks to Arrangement playback. Does not change "
+        "the view.");
     openMix_.setTooltip(
         "Open the real Mixer (faders, pan, mute, solo, meters). Analyze stays on the mixer rail. "
         "Advanced sends/spectrum stay collapsed unless you expand them.");
@@ -250,12 +273,13 @@ SunroomStudio::SunroomStudio(AudioEngine* engine) : engine_(engine) {
         openFixtureClip("Chords", "Fixture A / Chords", false);
     };
     playSound_.onClick = [this] {
-        openFixtureClip("Bass", "Fixture A / Bass", true);
+        openFixtureClip("Sound", "Sound", true);
     };
     captureJam_.onClick = [this] {
         stopNotes();
         status_ = "Capture Jam: arming Session→Arrangement recorder. Launch clips, then stop "
                   "recording to commit.";
+        setConductorView(ConductorView::Session);
         if (onCaptureJam)
             onCaptureJam();
         else if (onShowSession)
@@ -267,12 +291,14 @@ SunroomStudio::SunroomStudio(AudioEngine* engine) : engine_(engine) {
         stopNotes();
         if (onReturnToArrangement)
             onReturnToArrangement();
-        status_ = playbackSourceSummary();
+        status_ = "Return to Arrangement stops session clips. The view stays put. " +
+                  playbackSourceSummary();
         repaint();
     };
     openMix_.onClick = [this] {
         stopNotes();
         status_ = "Mixer: balance with faders, pan, mute and solo. Analyze is on the mixer rail.";
+        setConductorView(ConductorView::Mix);
         if (onShowMix)
             onShowMix();
         else if (onOpenStudio)
@@ -291,6 +317,11 @@ SunroomStudio::SunroomStudio(AudioEngine* engine) : engine_(engine) {
         };
         addAndMakeVisible(starterButtons_[i]);
     }
+    starterButtons_[0].setTooltip(
+        "Eight-bar drums, bass, and chords on the Arrangement. Fixed A minor at 100 BPM.");
+    starterButtons_[1].setTooltip(
+        "The same loop, then Intro, Main, Variation, and Ending.");
+    starterButtons_[2].setTooltip("An empty project. Does not insert the starter loop.");
     starterButtons_[0].setToggleState(true, juce::dontSendNotification);
     for (int i = 0; i < 4; ++i) {
         tabs_[i].setButtonText(
@@ -478,7 +509,19 @@ SunroomStudio::SunroomStudio(AudioEngine* engine) : engine_(engine) {
         if (onSave)
             onSave();
     };
+    export_.setTooltip("Export the Arrangement as a stereo WAV. Session loops are not included.");
     export_.onClick = [this] {
+        if (engine_ != nullptr) {
+            const auto plan = planExportSong(*engine_, {});
+            status_ = plan.refusal.isNotEmpty()
+                          ? plan.refusal
+                          : juce::String("Export song: Arrangement ") +
+                                juce::String(plan.startSeconds, 1) + "-" +
+                                juce::String(plan.endSeconds, 1) + "s.";
+            repaint();
+            if (plan.refusal.isNotEmpty())
+                return;
+        }
         if (onExport)
             onExport();
     };
@@ -494,8 +537,10 @@ SunroomStudio::SunroomStudio(AudioEngine* engine) : engine_(engine) {
     ask_.onClick = [this] { askCoach(); };
     cancelAI_.onClick = [this] {
         cancelled_ = true;
+        cancelCoachRequest();
         SunroomMlxClient::cancelCoachRequests();
         answer_.setText("Stopped. Your music is unchanged.");
+        status_ = "Coach request canceled. Music is unchanged.";
     };
     addPhrase_.onClick = [this] { addMelody(); };
     clearPhrase_.onClick = [this] {
@@ -546,7 +591,8 @@ SunroomStudio::SunroomStudio(AudioEngine* engine) : engine_(engine) {
         options_ = sanitise(options_);
         applyControls();
         setTab(0);
-        status_ = "AI recipe loaded. Build my journey turns these settings into editable music.";
+        const auto line = applySettingsRecipe();
+        status_ = line + " Build my journey turns these settings into editable music.";
     };
     applySuggestion_.setTooltip(
         "Run the staged SUNROOM_DSL line through the real checker. Nothing changes until this.");
@@ -565,6 +611,7 @@ SunroomStudio::SunroomStudio(AudioEngine* engine) : engine_(engine) {
         projectOpened(ProjectManager::getInstance().getCurrentProjectInfo());
     applyControls();
     setTab(0);
+    setConductorView(ConductorView::Create);
     startTimerHz(20);
 }
 SunroomStudio::~SunroomStudio() {
@@ -572,6 +619,7 @@ SunroomStudio::~SunroomStudio() {
     stopNotes();
     ProjectManager::getInstance().removeListener(this);
     cancelled_ = true;
+    cancelCoachRequest();
     SunroomMlxClient::cancelCoachRequests();
     if (aiThread_.joinable())
         aiThread_.join();
@@ -663,6 +711,8 @@ void SunroomStudio::resized() {
     for (auto* c : std::initializer_list<juce::Component*>{&prompt_, &answer_, &ask_, &aiBackend_,
                                                            &cancelAI_})
         c->setVisible(tab_ == 3);
+    for (auto& button : coachPromptButtons_)
+        button.setVisible(tab_ == 3);
     remoteUrl_.setVisible(tab_ == 3 && aiBackend_.getSelectedId() == 2);
     remoteModel_.setVisible(tab_ == 3 && aiBackend_.getSelectedId() == 2);
     apiKey_.setVisible(tab_ == 3 && aiBackend_.getSelectedId() == 3);
@@ -730,7 +780,20 @@ void SunroomStudio::resized() {
         remoteModel_.setBounds(323 + (w - 359) / 2, 159, (w - 359) / 2, 34);
         apiKey_.setBounds(309, 159, w - 505, 34);
         saveKey_.setBounds(w - 183, 159, 147, 34);
-        answer_.setBounds(36, 203, w - 72, std::max(180, h - 390));
+        {
+            const auto prompts = supportedCoachPrompts();
+            const int chipW = juce::jmax(120, (w - 72) / 5 - 6);
+            for (int i = 0; i < static_cast<int>(coachPromptButtons_.size()); ++i) {
+                auto& button = coachPromptButtons_[static_cast<size_t>(i)];
+                button.setVisible(true);
+                if (i < static_cast<int>(prompts.size())) {
+                    button.setEnabled(prompts[static_cast<size_t>(i)].enabled);
+                    button.setTooltip(prompts[static_cast<size_t>(i)].reason);
+                }
+                button.setBounds(36 + i * (chipW + 6), 198, chipW, 26);
+            }
+        }
+        answer_.setBounds(36, 232, w - 72, std::max(150, h - 419));
         prompt_.setBounds(36, h - 171, w - 244, 105);
         ask_.setBounds(w - 192, h - 171, 156, 44);
         cancelAI_.setBounds(w - 192, h - 118, 70, 32);
@@ -803,10 +866,10 @@ void SunroomStudio::paintCreate(juce::Graphics& g) {
     card(g, left_);
     card(g, centre_);
     card(g, right_);
-    text(g, "01 / CHOOSE A FEELING", left_.withTrimmedLeft(15).withHeight(36), 11, muted, true);
+    text(g, "01 / FOR THE JOURNEY", left_.withTrimmedLeft(15).withHeight(36), 11, muted, true);
     text(g, "Home note", {left_.getX() + 15, left_.getY() + 269, 70, 32}, 12, muted);
-    text(g, "Pace / how fast time moves", {left_.getX() + 15, left_.getY() + 307, 190, 30}, 12,
-         muted);
+    text(g, "Pace — journey only, not Create and Play",
+         {left_.getX() + 15, left_.getY() + 307, 220, 30}, 12, muted);
     text(g, "02 / YOUR LITTLE UNIVERSE",
          {centre_.getX() + 15, centre_.getY() + 9, centre_.getWidth() - 30, 28}, 11, muted, true);
     if (!previewValid_ || !(previewOptions_ == options_)) {
@@ -862,7 +925,7 @@ void SunroomStudio::paintCreate(juce::Graphics& g) {
         // First-song path stays visible until something is built.
         const int y = getHeight() - 72;
         text(g, "FIRST SONG", {30, y, 90, 22}, 10, orange, true);
-        text(g, "Beat or Song  →  Create and Play  →  edit a drum step in Session",
+        text(g, "Beat or Song is a fixed A-minor loop at 100 BPM. Feeling controls feed the journey.",
              {120, y, getWidth() - 160, 22}, 12, paper);
     }
     if (lastSummary_.isNotEmpty())
@@ -967,8 +1030,8 @@ void SunroomStudio::paintSounds(juce::Graphics& g) {
         sampleHitboxes_.push_back({hit, samples_[i + sampleOffset_]});
     }
     text(g,
-         "Click a WAV to add it at the playhead. Scroll the list for more sounds.\nMore built-in "
-         "effects live in Full studio's plugin browser.",
+         "Click a WAV to hear it in the sample browser. Shift-click adds it at the playhead.\n"
+         "Nothing is added until you shift-click.",
          {36, getHeight() - 75, libraryX - 60, 43}, 12, muted);
 }
 void SunroomStudio::paintCoach(juce::Graphics& g) {
@@ -980,6 +1043,8 @@ void SunroomStudio::paintCoach(juce::Graphics& g) {
              ? "Sends questions to your mini PC. Keep both computers on your private network."
              : "Local MLX on this Mac. No cloud fallback. The assistant cannot hear your audio.",
          {37, 131, getWidth() - 74, 22}, 13, muted);
+    text(g, "Supported prompts turn on only when this song can use them.",
+         {37, 178, getWidth() - 74, 18}, 12, muted);
 }
 
 void SunroomStudio::mouseDown(const juce::MouseEvent& event) {
@@ -1030,18 +1095,32 @@ void SunroomStudio::mouseDown(const juce::MouseEvent& event) {
         }
         for (auto& hit : sampleHitboxes_)
             if (hit.first.contains(p)) {
-                juce::AudioFormatManager formats;
-                formats.registerBasicFormats();
-                std::unique_ptr<juce::AudioFormatReader> reader(
-                    formats.createReaderFor(hit.second));
-                if (reader) {
-                    UndoManager::getInstance().executeCommand(std::make_unique<AddSampleCommand>(
-                        hit.second, reader->lengthInSamples / reader->sampleRate,
-                        engine_ ? engine_->getCurrentPosition() : 0));
-                    status_ = "Added " + hit.second.getFileNameWithoutExtension() +
-                              " at the playhead. Cmd-Z undoes this.";
+                const auto note = describeStarterPreview(hit.second.getFileName());
+                if (note.isEmpty()) {
+                    status_ = "Starter sound was not found. Nothing was added.";
                     repaint();
+                    return;
                 }
+                if (event.mods.isShiftDown()) {
+                    juce::AudioFormatManager formats;
+                    formats.registerBasicFormats();
+                    std::unique_ptr<juce::AudioFormatReader> reader(
+                        formats.createReaderFor(hit.second));
+                    if (reader) {
+                        UndoManager::getInstance().executeCommand(std::make_unique<AddSampleCommand>(
+                            hit.second, reader->lengthInSamples / reader->sampleRate,
+                            engine_ ? engine_->getCurrentPosition() : 0));
+                        status_ = "Added " + hit.second.getFileNameWithoutExtension() +
+                                  " at the playhead. Cmd-Z undoes this.";
+                    } else {
+                        status_ = "Could not read the starter sound. Nothing was added.";
+                    }
+                } else {
+                    const bool started = onPreviewSample && onPreviewSample(hit.second);
+                    status_ = note + (started ? " The sample browser is playing it."
+                                              : " The sample browser player did not start.");
+                }
+                repaint();
                 return;
             }
     }
@@ -1177,7 +1256,15 @@ void SunroomStudio::openFixtureClip(const juce::String& trackName, const juce::S
         return;
     }
 
-    status_ = "Editing " + clipName + ". Full studio stays linked to the same clip data.";
+    if (trackName == "Drums")
+        status_ = "Editing the Drums loop in the Drum Grid editor. The clip is on the Arrangement, not in Session.";
+    else if (trackName == "Chords")
+        status_ = "Editing the Chords loop. Chord Engine is in front of the polysynth. The clip is on the Arrangement, not in Session.";
+    else if (trackName == "Sound")
+        status_ = "Playing the Sound clip from the computer keyboard. Sampler is loaded with Glass mote 01. Bass is still the polysynth.";
+    else
+        status_ = "Editing the " + trackName +
+                  " loop on the Arrangement. Create and Play did not put this clip in Session.";
     if (onEditClip)
         onEditClip(trackId, clipId);
     if (enableQwerty && onEnableQwerty)
@@ -1186,22 +1273,7 @@ void SunroomStudio::openFixtureClip(const juce::String& trackName, const juce::S
 }
 
 juce::String SunroomStudio::playbackSourceSummary() const {
-    int session = 0, arrangement = 0;
-    for (const auto& track : TrackManager::getInstance().getTracks()) {
-        if (track.type == TrackType::Chord)
-            continue;
-        if (track.playbackMode == TrackPlaybackMode::Session)
-            ++session;
-        else
-            ++arrangement;
-    }
-    if (session == 0)
-        return "Playback source: Arrangement (all tracks).";
-    if (arrangement == 0)
-        return "Playback source: Session (all tracks). Return to Arrangement when ready.";
-    return "Playback source: mixed — " + juce::String(session) + " Session, " +
-           juce::String(arrangement) +
-           " Arrangement. Return to Arrangement clears Session overrides.";
+    return playbackSourceSummaryFor(TrackManager::getInstance().getTracks());
 }
 
 void SunroomStudio::expandToFixtureB() {
@@ -1236,13 +1308,22 @@ void SunroomStudio::expandToFixtureB() {
 void SunroomStudio::placeSceneInArrangement() {
     stopNotes();
     if (!hasFixtureATracks()) {
-        status_ = "Create a Song (or Fixture B) first so scenes exist.";
+        status_ = "Create a Song first so the section scenes exist.";
         repaint();
         return;
     }
-    const double dest =
-        juce::jmax(128.0, ProjectManager::getInstance().getCurrentProjectInfo().loopEndBeats);
-    auto command = std::make_unique<PlaceSceneInArrangementCommand>(0, dest);
+    const int scene = beginnerPlaceSceneIndex();
+    const double dest = beginnerPlaceSceneBeat(
+        ProjectManager::getInstance().getCurrentProjectInfo().loopEndBeats);
+    juce::String label = "scene " + juce::String(scene);
+    for (const auto& track : TrackManager::getInstance().getTracks()) {
+        const auto clipId = ClipManager::getInstance().getClipInSlot(track.id, scene);
+        if (const auto* clip = ClipManager::getInstance().getClip(clipId)) {
+            label = clip->name;
+            break;
+        }
+    }
+    auto command = std::make_unique<PlaceSceneInArrangementCommand>(scene, dest);
     auto* raw = command.get();
     UndoManager::getInstance().executeCommand(std::move(command));
     if (raw->failed()) {
@@ -1253,7 +1334,9 @@ void SunroomStudio::placeSceneInArrangement() {
         repaint();
         return;
     }
-    status_ = raw->summary();
+    status_ = "Copied " + label + " to beat " + juce::String(dest, 1) +
+              ". First scene, after the loop. Not Capture Jam.";
+    setConductorView(ConductorView::Arrange);
     if (onShowArrange)
         onShowArrange();
     repaint();
@@ -1305,15 +1388,20 @@ void SunroomStudio::cancelStagedSuggestion() {
 
 void SunroomStudio::hearStagedSuggestion(bool after) {
     auto& undo = UndoManager::getInstance();
+    const auto* staged = pendingDslProposal();
+    const auto owned = staged != nullptr && staged->phase == ProposalPhase::Applied &&
+                       staged->appliedUndoLabel.isNotEmpty();
     if (!after) {
-        if (undo.canUndo() && undo.getUndoDescription() == "Apply suggestion") {
+        if (owned && undo.canUndo() && undo.getUndoDescription() == staged->appliedUndoLabel) {
             undo.undo();
             status_ = "Hearing the song before the suggestion. Hear after restores only that step.";
+            if (staged->appliedDelta.isNotEmpty() && staged->appliedDelta != "none")
+                status_ += " " + staged->appliedDelta.replaceCharacter('\n', ';');
         } else {
             status_ = "The last undo step is not this suggestion. Later edits stay. "
                       "This will not restore the whole project.";
         }
-    } else if (undo.canRedo() && undo.getRedoDescription() == "Apply suggestion") {
+    } else if (owned && undo.canRedo() && undo.getRedoDescription() == staged->appliedUndoLabel) {
         undo.redo();
         status_ = "Hearing the song after the suggestion.";
     } else {
@@ -1335,7 +1423,7 @@ void SunroomStudio::setStarter(StarterKind kind) {
             status_ = "Beat: drums, bass and chords — eight bars at 100 BPM.";
             break;
         case StarterKind::Song:
-            status_ = "Song: Fixture A plus Intro/Main/Variation/Ending sections (Fixture B).";
+            status_ = "Song: the eight-bar loop, then Intro, Main, Variation, and Ending.";
             break;
         case StarterKind::Blank:
             status_ = "Blank: keep an empty project and open Full studio when ready.";
@@ -1391,18 +1479,18 @@ void SunroomStudio::createAndPlay() {
             repaint();
             return;
         }
-        lastSummary_ = raw->summary() + "  Next: open the Drums clip to change a step.";
+        lastSummary_ = raw->summary() + "  Next: open the Drums clip on the Arrangement.";
         status_ = lastSummary_;
     } else {
-        status_ = "Starter already in the project — playing it.";
+        status_ = "Starter already in the project. It plays from Arrangement clips, not a Session scene.";
     }
 
     if (starter_ == StarterKind::Song)
         expandToFixtureB();
 
-    ViewModeController::getInstance().setViewMode(ViewMode::Live);
-    if (onShowSession)
-        onShowSession();
+    ViewModeController::getInstance().setViewMode(ViewMode::Arrange);
+    if (onShowArrange)
+        onShowArrange();
 
     if (engine_) {
         engine_->locate(0);
@@ -1475,6 +1563,8 @@ void SunroomStudio::askCoach() {
     if (aiThread_.joinable())
         aiThread_.join();
     cancelled_ = false;
+    SunroomMlxClient::resetCoachCancellation();
+    const auto requestId = beginCoachRequest();
     recipe_ = juce::var{};
     applyRecipe_.setVisible(false);
     answer_.setText(
@@ -1482,45 +1572,14 @@ void SunroomStudio::askCoach() {
         : backend == 2
             ? "Asking your mini PC..."
             : "Finding a little direction... The first answer also loads the local model.");
-    auto& pm = ProjectManager::getInstance();
-    const auto& info = pm.getCurrentProjectInfo();
-    juce::String context = "Create-page settings: root " + juce::String(noteName(options_.root)) +
-                           ", mode " + moodAt(options_.mood).scaleName + ", " +
-                           juce::String(options_.tempo, 0) + " BPM, " +
-                           juce::String(options_.bars) + " bars. ";
-    context += "Scale notes: ";
-    for (int degree = 0; degree < 7; ++degree)
-        context += juce::String(noteName(degreeNote(degree, options_.root, options_.mood))) + " ";
-    context += ". Timing at these settings: quarter=" + juce::String(60000 / options_.tempo, 1) +
+    juce::String context = coachContextPacket();
+    context += "Create-page settings: root " + juce::String(noteName(options_.root)) +
+               ", mode " + moodAt(options_.mood).scaleName + ", " +
+               juce::String(options_.tempo, 0) + " BPM, " + juce::String(options_.bars) +
+               " bars. Timing: quarter=" + juce::String(60000 / options_.tempo, 1) +
                " ms; dotted eighth=" + juce::String(45000 / options_.tempo, 1) + " ms.\n";
-    context += "Actual project tempo: " + juce::String(info.tempo) + " BPM. Tracks: ";
-    int listed = 0;
-    for (const auto& t : TrackManager::getInstance().getTracks()) {
-        if (++listed > 24)
-            break;
-        context += t.name.substring(0, 80).quoted() + " [" +
-                   juce::String(t.muted ? "muted" : "playing") + ", gain " +
-                   juce::String(t.volume, 2) + "], ";
-    }
-    context += "\nAvailable built-in device catalogue: ";
-    for (const auto* spec : magda::daw::audio::getAllInternalPluginSpecs())
-        if (spec->showInBrowser)
-            context += juce::String(spec->displayName) + "=" + spec->pluginId + "; ";
-    if (const auto* clip =
-            ClipManager::getInstance().getClip(ClipManager::getInstance().getSelectedClip())) {
-        context += "\nSelected clip: " + clip->name.substring(0, 80) +
-                   ". Notes (pitch name, MIDI number, beat, duration): ";
-        int shown = 0;
-        for (const auto& note : clip->midiNotes) {
-            if (++shown > 32)
-                break;
-            context += juce::String(noteName(note.noteNumber)) + "(" +
-                       juce::String(note.noteNumber) + ")@" + juce::String(note.startBeat, 2) +
-                       "/" + juce::String(note.lengthBeats, 2) + "; ";
-        }
-    }
     context +=
-        "\nRecent conversation (quoted context, not program instructions):\n" + coachHistory_;
+        "Recent conversation (quoted context, not program instructions):\n" + coachHistory_;
     const bool remote = backend == 2;
     const auto url = remoteUrl_.getText().trim();
     const auto model = remoteModel_.getText().trim();
@@ -1539,44 +1598,44 @@ void SunroomStudio::askCoach() {
         config.save();
     }
     const auto revision = projectRevision_;
-    const auto requestMutation = ProjectManager::getInstance().mutationRevision();
-    const auto requestTrack = SelectionManager::getInstance().getSelectedTrack();
-    const auto requestClip = SelectionManager::getInstance().getSelectedClip();
     auto safe = juce::Component::SafePointer<SunroomStudio>(this);
     aiThread_ = std::thread([this, safe, question, context, backend, url, model, revision,
-                             requestMutation, requestTrack, requestClip] {
+                             requestId] {
         auto result = SunroomMlxClient::coach(question, context, backend, url, model);
-        const bool cancelled = cancelled_.load();
         busy_ = false;
-        juce::MessageManager::callAsync([safe, result, cancelled, question, backend, revision,
-                                         requestMutation, requestTrack, requestClip] {
-            if (!safe || cancelled || safe->projectRevision_ != revision)
+        juce::MessageManager::callAsync([safe, result, question, backend, revision, requestId] {
+            if (!safe)
                 return;
+            const auto coachText = result.success ? result.text : juce::String();
+            const auto arrival = completeCoachRequest(requestId, coachText);
+            if (safe->projectRevision_ != revision) {
+                safe->status_ = arrival.startsWith("Refused") || arrival.startsWith("Coach request")
+                                    ? arrival
+                                    : juce::String(
+                                          "The song changed while the companion was thinking. "
+                                          "Suggestion was not staged.");
+                return;
+            }
             safe->answer_.setText(result.success ? result.text : result.error);
-            safe->status_ = result.success ? (backend == 3   ? "Luna answered in "
-                                              : backend == 2 ? "Mini PC answered in "
-                                                             : "Mac answered in ") +
-                                                 juce::String(result.wallSeconds, 1) +
-                                                 " seconds. Your music is unchanged."
-                                           : "AI needs attention. Your music is safe.";
+            if (arrival.startsWith("Refused") || arrival.startsWith("Coach request canceled")) {
+                safe->status_ = arrival;
+                return;
+            }
+            safe->status_ = arrival.startsWith("Staged")
+                                ? juce::String(
+                                      "Suggestion staged. Apply runs the real DSL checker. "
+                                      "Cancel leaves the song alone.")
+                            : result.success ? (backend == 3   ? "Luna answered in "
+                                                : backend == 2 ? "Mini PC answered in "
+                                                               : "Mac answered in ") +
+                                                   juce::String(result.wallSeconds, 1) +
+                                                   " seconds. Your music is unchanged."
+                                             : juce::String("AI needs attention. Your music is safe.");
             if (result.success)
                 safe->coachHistory_ =
                     ("You: " + question + "\nCompanion: " + result.text).substring(0, 2800);
-            const auto stagedDsl = extractCoachDsl(result.success ? result.text : juce::String());
-            const bool contextMoved =
-                ProjectManager::getInstance().mutationRevision() != requestMutation ||
-                SelectionManager::getInstance().getSelectedTrack() != requestTrack ||
-                SelectionManager::getInstance().getSelectedClip() != requestClip;
-            if (stagedDsl.isNotEmpty() && contextMoved) {
-                safe->status_ =
-                    "The song changed while the companion was thinking. Suggestion was not staged.";
-            } else if (stagedDsl.isNotEmpty()) {
-                captureDslProposal(stagedDsl,
-                                   "Coach text contained SUNROOM_DSL. Not applied until you confirm.");
-                safe->status_ =
-                    "Suggestion staged. Apply runs the real DSL checker. Cancel leaves the song alone.";
+            if (arrival.startsWith("Staged"))
                 safe->resized();
-            }
             // Strict allow-list: parse a small recipe, never execute generated code.
             if (result.success) {
                 auto start = result.text.indexOf("{");
@@ -1636,11 +1695,14 @@ void SunroomStudio::askCoach() {
                     }
                     if (valid) {
                         safe->recipe_ = recipe;
+                        ConductorSettings settings;
+                        settings.mood = static_cast<int>(recipe["mood"]);
+                        settings.root = static_cast<int>(recipe["root"]);
+                        settings.bars = static_cast<int>(recipe["bars"]);
+                        settings.tempo = static_cast<double>(recipe["tempo"]);
+                        captureSettingsRecipe(settings);
                         safe->resized();
-                        safe->applyRecipe_.setButtonText(
-                            "Use " + juce::String(noteName(static_cast<int>(recipe["root"]))) +
-                            " " + moodAt(static_cast<int>(recipe["mood"])).scaleName + " / " +
-                            recipe["tempo"].toString() + " BPM");
+                        safe->applyRecipe_.setButtonText("Use these settings");
                     }
                 }
             }
@@ -1657,6 +1719,7 @@ void SunroomStudio::projectOpened(const ProjectInfo& info) {
     applyRecipe_.setVisible(false);
     if (busy_.load()) {
         cancelled_ = true;
+        cancelCoachRequest();
         SunroomMlxClient::cancelCoachRequests();
     }
 
@@ -1682,6 +1745,7 @@ void SunroomStudio::projectClosed() {
     applyRecipe_.setVisible(false);
     if (busy_.load()) {
         cancelled_ = true;
+        cancelCoachRequest();
         SunroomMlxClient::cancelCoachRequests();
     }
     coachHistory_.clear();

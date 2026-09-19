@@ -706,6 +706,8 @@ class InsertTimeAutomationCommand : public UndoableCommand {
 class SetAutomationLanePointsCommand : public UndoableCommand {
   public:
     SetAutomationLanePointsCommand(AutomationLaneId laneId, std::vector<AutomationPoint> points);
+    SetAutomationLanePointsCommand(AutomationLaneId laneId, std::vector<AutomationPoint> points,
+                                   bool removeLaneOnUndo);
 
     void execute() override;
     void undo() override;
@@ -722,6 +724,8 @@ class SetAutomationLanePointsCommand : public UndoableCommand {
     std::vector<AutomationPoint> points_;
     AutomationLaneInfo storedLane_;
     std::vector<AutomationClipInfo> storedClips_;
+    size_t storedIndex_ = 0;
+    bool removeLaneOnUndo_ = false;
     bool captured_ = false;
     bool applied_ = false;
 };

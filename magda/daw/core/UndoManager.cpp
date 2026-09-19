@@ -26,6 +26,16 @@ void UndoManager::executeCommand(std::unique_ptr<UndoableCommand> command) {
         ProjectManager::UndoableMutationScope mutationScope;
         command->execute();
     }
+    if (command->failed()) {
+        // The command is responsible for restoring music. Do not record it and
+        // do not clear earlier redo entries.
+        currentStateId_ = beforeStateId;
+        rejected_ = std::move(command);
+        updateProjectDirtyState();
+        notifyListeners();
+        return;
+    }
+    rejected_.reset();
     currentStateId_ = nextStateId_++;
 
     // If in compound operation, collect commands instead of pushing to stack

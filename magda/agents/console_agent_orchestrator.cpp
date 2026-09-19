@@ -7,12 +7,11 @@
 #include "../daw/core/LLMClientProvider.hpp"
 #include "../daw/core/MixAnalysisService.hpp"
 #include "../daw/core/TrackManager.hpp"
+#include "../daw/sunroom/SunroomActions.hpp"
 #include "automation_agent.hpp"
-#include "automation_executor.hpp"
 #include "command_agent.hpp"
 #include "drummer_agent.hpp"
 #include "dsl_interpreter.hpp"
-#include "instruction_executor.hpp"
 #include "mixing_agent.hpp"
 #include "music_agent.hpp"
 
@@ -264,67 +263,21 @@ ConsoleExecutionResult ConsoleAgentResultExecutor::execute(ConsoleRunOutput outp
 
     ClipManager::BatchScope clipBatch;
     TrackManager::BatchScope trackBatch;
-    int commandClipId = -1;
 
-    if (!output.dslCode.empty()) {
-        dsl::Interpreter interpreter(api_);
-        if (interpreter.execute(output.dslCode.c_str())) {
-            auto results = interpreter.getResults().toStdString();
-            result.response = results.empty() ? "OK" : results;
-            commandClipId = interpreter.getCurrentClipId();
+    if (!output.dslCode.empty() || !output.musicInstructions.empty() ||
+        !output.automationInstructions.empty()) {
+        const auto proposal = sunroom::captureDslProposal(
+            juce::String(output.dslCode), "Staged from console agent. Not applied until apply.",
+            output.musicInstructions, juce::String(output.musicDescription), reviseTargetClipId,
+            reviseTargetClipId != INVALID_CLIP_ID, output.automationInstructions);
+        if (proposal.id == 0) {
+            result.response = proposal.explanation.isNotEmpty()
+                                  ? proposal.explanation.toStdString()
+                                  : "Refused: proposal was not staged. Music is unchanged.";
         } else {
-            result.response = "Error: " + std::string(interpreter.getError());
-        }
-    }
-
-    if (!output.musicInstructions.empty()) {
-        if (!output.musicDescription.empty()) {
-            if (!result.response.empty())
-                result.response += "\n";
-            result.response += output.musicDescription;
-        }
-        InstructionExecutor executor(api_);
-        const int seedClipId =
-            reviseTargetClipId != INVALID_CLIP_ID ? reviseTargetClipId : commandClipId;
-        executor.setSeedClipId(seedClipId);
-        executor.setReplaceSeedClipContents(reviseTargetClipId != INVALID_CLIP_ID);
-        if (executor.execute(output.musicInstructions)) {
-            result.generatedMidiClipId = executor.getCurrentClipId();
-            if (reviseTargetClipId == INVALID_CLIP_ID && !output.musicDescription.empty() &&
-                executor.getCurrentClipId() >= 0) {
-                constexpr int kMaxClipNameLen = 40;
-                juce::String clipName(output.musicDescription);
-                const auto clausePos = clipName.indexOfAnyOf(".,;");
-                if (clausePos > 0 && clausePos < kMaxClipNameLen)
-                    clipName = clipName.substring(0, clausePos);
-                if (clipName.length() > kMaxClipNameLen)
-                    clipName =
-                        clipName.substring(0, kMaxClipNameLen).trim() + juce::String::fromUTF8("…");
-                ClipManager::getInstance().setClipName(executor.getCurrentClipId(),
-                                                       clipName.trim());
-            }
-            auto results = executor.getResults().toStdString();
-            if (!result.response.empty())
-                result.response += "\n";
-            result.response += results.empty() ? "OK" : results;
-        } else {
-            if (!result.response.empty())
-                result.response += "\n";
-            result.response += "Error: " + executor.getError().toStdString();
-        }
-    }
-
-    if (!output.automationInstructions.empty()) {
-        AutomationExecutor executor(api_);
-        if (executor.execute(output.automationInstructions)) {
-            auto results = executor.getResults().toStdString();
-            if (!result.response.empty())
-                result.response += "\n";
-            result.response += results.empty() ? "OK" : results;
-        } else {
-            if (!result.response.empty())
-                result.response += "\n";
-            result.response += "Error: " + executor.getError().toStdString();
+            if (!output.musicDescription.empty())
+                result.response = output.musicDescription + "\n";
+            result.response += "Staged " + std::to_string(proposal.id) + ". Not applied.";
         }
     }
 

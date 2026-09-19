@@ -57,6 +57,9 @@ class MixerView : public juce::Component,
         audioEngine_ = audioEngine;
     }
 
+    // Hide optional mixer rows for this session without writing Config.
+    void applyGuidedPresentation();
+
     void paint(juce::Graphics& g) override;
     void resized() override;
     void lookAndFeelChanged() override;

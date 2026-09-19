@@ -60,6 +60,29 @@ def dump_project(name: str, project: pathlib.Path) -> dict:
     raise AssertionError(f"{name}: missing dump-json")
 
 
+report = call("00-capture-vs-place", "capture-vs-place")
+assert "capture-start launch 1.5" in report, report
+assert "capture-start transport 3.5" in report, report
+assert "headless-recorder no" in report, report
+assert "Not this command." in report
+
+defaults = call("00b-place-default", "place-scene-default")
+for line in ("scene 0", "loop 100 beat 128", "loop 128 beat 128", "loop 160 beat 160"):
+    assert line in defaults, defaults
+
+returned = call("00c-return", "return-to-arrangement")
+for line in ("clip-set Session", "clip-cleared Arrangement", "headless-scheduler no", "deactivate-called"):
+    assert line in returned, returned
+
+sources = call("00d-playback-source", "playback-source")
+for line in (
+    "empty Playback source: none. No playable tracks yet.",
+    "aux Playback source: none. No playable tracks yet.",
+    "arrangement Playback source: Arrangement (all playable tracks).",
+    "mixed Playback source: mixed - 1 Session, 1 Arrangement.",
+):
+    assert line in sources, sources
+
 blank = saved(call("01-init", "init", qa / "Blank.mgd"))
 song = saved(call("02-fixture-b", "exec", blank, "fixture-b", "--out", qa / "Song.mgd"))
 doc = dump_project("02b-dump", song)
@@ -111,10 +134,38 @@ print("04-conflict passed", flush=True)
 
 cblank = saved(call("05-init-c", "init", qa / "BlankC.mgd"))
 cproj = saved(call("06-fixture-c", "exec", cblank, "fixture-c", "--out", qa / "FixtureC.mgd"))
-assert "Session Pulse" in (qa / "06-fixture-c.log").read_text() or True
 cdoc = dump_project("06b-dump", cproj)
-names = {t["name"] for t in cdoc.get("tracks") or []}
-assert {"Pulse", "Pad"} <= names
+by_name = {t.get("name"): t.get("clips") or [] for t in cdoc.get("tracks") or []}
+assert {"Pulse", "Pad"} <= set(by_name)
+pulse = by_name["Pulse"]
+pad = by_name["Pad"]
+session = [
+    c
+    for c in pulse
+    if c.get("view") == "session" and c.get("name") == "Fixture C / Session Pulse"
+]
+arrangement = [
+    c
+    for c in pulse
+    if c.get("view") == "arrangement" and c.get("name") == "Fixture C / Arrangement Pulse"
+]
+assert len(session) == 1 and len(arrangement) == 1
+# Arrangement is kick-on-1 only (8 notes). Session is a different full beat (96 notes).
+assert len(arrangement[0].get("notes") or []) == 8
+assert len(session[0].get("notes") or []) == 96
+arrangement_notes = {n.get("note") for n in arrangement[0]["notes"]}
+session_notes = {n.get("note") for n in session[0]["notes"]}
+arrangement_starts = {n.get("startBeat") for n in arrangement[0]["notes"]}
+session_starts = {n.get("startBeat") for n in session[0]["notes"]}
+assert len(arrangement_notes) == 1
+assert session_notes > arrangement_notes
+assert 0.5 in session_starts and 0.5 not in arrangement_starts
+assert all(c.get("view") == "arrangement" for c in pad)
+assert any(c.get("name") == "Fixture C / Arrangement Pad" for c in pad)
+assert not any(c.get("view") == "session" for c in pad)
+summary = (qa / "06-fixture-c.log").read_text()
+assert "different Session clip" in summary
+assert "Pad is Arrangement-only" in summary
 
 result = {
     "phase": "P5",

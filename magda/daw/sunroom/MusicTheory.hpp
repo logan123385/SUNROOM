@@ -68,6 +68,15 @@ inline int snapToScale(int note, int root, int mood) {
     }
     return note;
 }
+
+/** New piano-roll notes snap only when scale lock and the project guide are on,
+ *  and the track is not Drum Grid. Otherwise the clicked pitch is kept. */
+inline int scaleLockedInsertNote(int note, bool scaleLockEnabled, bool sunroomGuide, int keyRoot,
+                                 int mood, bool drumGridTrack) {
+    if (!scaleLockEnabled || drumGridTrack || !sunroomGuide || keyRoot < 0)
+        return note;
+    return snapToScale(note, keyRoot, mood);
+}
 // A scale degree can cross an octave. Never modulo-wrap it down unexpectedly.
 inline int degreeNote(int degree, int root, int mood, int octaveBase = 48) {
     int octave = static_cast<int>(std::floor(degree / 7.0));

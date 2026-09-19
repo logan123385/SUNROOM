@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """P1 beginner gate: grouped journey undo/redo via UndoManager, save/reopen, failed overwrite."""
+import gzip
 import json
 import os
 import pathlib
 import subprocess
 import sys
 import time
+import zlib
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 cli = pathlib.Path(
@@ -105,6 +107,25 @@ def music_fingerprint(doc: dict) -> dict:
 
 def clip_count(doc: dict) -> int:
     return sum(len(t.get("clips") or []) for t in doc.get("tracks") or [])
+
+
+def decode_mgd(data: bytes) -> dict:
+    if data[:2] == b"\x1f\x8b":
+        raw = gzip.decompress(data)
+    else:
+        raw = zlib.decompress(data)
+    return json.loads(raw)
+
+
+def encode_like(doc: dict, original: bytes) -> bytes:
+    raw = json.dumps(doc).encode("utf-8")
+    if original[:2] == b"\x1f\x8b":
+        return gzip.compress(raw)
+    return zlib.compress(raw)
+
+
+def track_names(doc: dict) -> set[str]:
+    return {track.get("name") for track in doc.get("tracks") or []}
 
 
 blank = saved(call("01-init", "init", qa / "Blank.mgd"))
@@ -211,6 +232,165 @@ recovered = saved(
 assert recovered.is_file()
 recovered_fp = music_fingerprint(dump_project("07b-recover-dump", recovered))
 assert recovered_fp == undone_fp, "autosave recovery did not load the sidecar"
+
+inject_env = env.copy()
+inject_env["MAGDA_SUNROOM_INJECT_FAIL"] = "fixture-a-after-first-track"
+partial_out = qa / "Partial-failed.mgd"
+if partial_out.exists():
+    partial_out.unlink()
+partial = subprocess.run(
+    [
+        str(cli),
+        "exec",
+        str(blank),
+        "sunroom-journey",
+        "0",
+        "2",
+        "8",
+        "84",
+        "undo",
+        "fixture-a",
+        "--out",
+        str(partial_out),
+    ],
+    env=inject_env,
+    capture_output=True,
+    text=True,
+    timeout=300,
+)
+partial_log = partial.stdout + "\n" + partial.stderr
+(qa / "08-partial-failure.log").write_text(partial_log)
+assert partial.returncode != 0, partial_log[-800:]
+assert "Injected failure after the first track" in partial_log
+assert "Redo: 'Create SUNROOM journey'" in partial_log
+assert "Fixture clips remain: no" in partial_log
+assert "Remaining track Drums" not in partial_log
+assert "tempo 100" not in partial_log
+assert "Redo after failure: 'Create SUNROOM journey'" in partial_log
+assert "fixture resurrected: no" in partial_log
+assert not partial_out.exists() and not (qa / "Partial-failed").exists()
+records.append({"step": "08-partial-failure", "returncode": partial.returncode, "preserved": True})
+print("08-partial-failure passed", flush=True)
+
+sample = saved(
+    call(
+        "09-sample",
+        "exec",
+        blank,
+        "add-sample",
+        "Heartbeat 01.wav",
+        "--out",
+        qa / "Sample.mgd",
+    )
+)
+sample_doc = decode_mgd(sample.read_bytes())
+assert sample_doc.get("sources"), "imported sample did not record a source"
+missing_wav = qa / "missing-media" / "gone.wav"
+assert not missing_wav.exists()
+for source in sample_doc["sources"]:
+    source["filePath"] = str(missing_wav)
+    source["sampleRate"] = 48000
+missing_project = qa / "missing-src.mgd"
+missing_project.write_bytes(encode_like(sample_doc, sample.read_bytes()))
+missing_prior = missing_project.read_bytes()
+reopened_missing = saved(
+    call(
+        "09b-missing-reopen",
+        "exec",
+        missing_project,
+        "--dump-json",
+        "--out",
+        qa / "Missing-reopened.mgd",
+    )
+)
+assert missing_project.read_bytes() == missing_prior, "reopen rewrote the project with missing media"
+reopened_doc = decode_mgd(reopened_missing.read_bytes())
+reopened_sources = reopened_doc.get("sources") or []
+assert reopened_sources, "reopen dropped the missing source"
+assert reopened_sources[0].get("filePath") == str(missing_wav)
+assert float(reopened_sources[0].get("sampleRate") or 0) == 0.0
+assert not missing_wav.exists()
+records.append({"step": "09-missing-media", "returncode": 0, "preserved": True})
+print("09-missing-media passed", flush=True)
+
+keep = saved(call("10-keep", "init", qa / "Keep.mgd"))
+rich = saved(call("10b-rich", "exec", keep, "fixture-a", "--out", qa / "Rich.mgd"))
+keep_prior = keep.read_bytes()
+rich_prior = rich.read_bytes()
+assert "Drums" in track_names(decode_mgd(rich_prior))
+sidecar = keep.with_name(keep.name + ".autosave")
+sidecar.write_bytes(keep_prior[:24])
+future = time.time() + 30
+os.utime(sidecar, (future, future))
+os.utime(keep, (future - 120, future - 120))
+recover_env = env.copy()
+recover_env["MAGDA_AUTOSAVE_RECOVER"] = "recover"
+truncated = subprocess.run(
+    [str(cli), "exec", str(keep), "--dump-json", "--out", str(qa / "Truncated-out.mgd")],
+    env=recover_env,
+    capture_output=True,
+    text=True,
+    timeout=300,
+)
+(qa / "10c-truncated.log").write_text(truncated.stdout + "\n" + truncated.stderr)
+assert truncated.returncode != 0, truncated.stdout + truncated.stderr
+assert keep.read_bytes() == keep_prior, "truncated autosave replaced the last valid save"
+assert sidecar.read_bytes() == keep_prior[:24], "failed recovery deleted or rewrote the sidecar"
+records.append({"step": "10c-truncated-autosave", "returncode": truncated.returncode, "preserved": True})
+print("10c-truncated-autosave passed", flush=True)
+
+sidecar.write_bytes(rich_prior)
+os.utime(sidecar, (future + 30, future + 30))
+locked_dir = qa / "locked"
+locked_dir.mkdir(exist_ok=True)
+locked = locked_dir / "locked.mgd"
+locked.write_bytes(b"last-valid-destination")
+locked.chmod(0o444)
+blocked = subprocess.run(
+    [str(cli), "exec", str(keep), "--dump-json", "--out", str(locked)],
+    env=recover_env,
+    capture_output=True,
+    text=True,
+    timeout=300,
+)
+locked.chmod(0o644)
+(qa / "10d-blocked-save.log").write_text(blocked.stdout + "\n" + blocked.stderr)
+assert blocked.returncode != 0, blocked.stdout + blocked.stderr
+assert locked.read_bytes() == b"last-valid-destination"
+assert keep.read_bytes() == keep_prior
+assert sidecar.read_bytes() == rich_prior, "failed save deleted the recovered autosave"
+records.append({"step": "10d-blocked-recovery-save", "returncode": blocked.returncode, "preserved": True})
+print("10d-blocked-recovery-save passed", flush=True)
+
+copied = saved(
+    call(
+        "10e-recover-copy",
+        "exec",
+        keep,
+        "--dump-json",
+        "--out",
+        qa / "Recovered-copy.mgd",
+        env_override=recover_env,
+    )
+)
+assert keep.read_bytes() == keep_prior, "successful recovery rewrote the original project"
+assert sidecar.read_bytes() == rich_prior, "saving a copy removed the original project's autosave"
+assert "Drums" in track_names(decode_mgd(copied.read_bytes()))
+
+saved_over = saved(
+    call(
+        "10f-save-over",
+        "exec",
+        keep,
+        "--dump-json",
+        "--out",
+        keep,
+        env_override=recover_env,
+    )
+)
+assert "Drums" in track_names(decode_mgd(keep.read_bytes()))
+assert "Drums" in track_names(decode_mgd(saved_over.read_bytes()))
+assert not sidecar.exists(), "saving onto the original left the autosave sidecar behind"
 
 out = {
     "steps": records,

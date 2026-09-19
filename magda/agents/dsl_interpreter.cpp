@@ -367,6 +367,7 @@ bool Interpreter::execute(const char* dslCode) {
     }
 
     ctx_ = InterpreterContext();
+    failedStatementCount_ = 0;
 
     // Seed implicit context from the UI selection so a bare statement like
     // `fx("reverb")` or `note(...)` targets the selected track/clip. Matches
@@ -426,13 +427,16 @@ bool Interpreter::execute(const char* dslCode) {
     }
 
     DBG("MAGDA DSL: Execution complete");
+    failedStatementCount_ = failed;
 
-    if (succeeded == 0 && failed > 0) {
+    if (failed > 0) {
         // Surface the underlying reasons, not just the count, so failures like
         // an unresolved plugin alias are diagnosable from the error alone.
         auto reasons = failureReasons.joinIntoString("; ");
-        const auto summary = failed == 1 ? juce::String("Command failed")
-                                         : "All " + juce::String(failed) + " commands failed";
+        const auto summary = succeeded == 0 && failed == 1
+                                 ? juce::String("Command failed")
+                             : succeeded == 0 ? "All " + juce::String(failed) + " commands failed"
+                                              : juce::String(failed) + " command(s) failed";
         ctx_.setError(summary + (reasons.isEmpty() ? juce::String() : ": " + reasons));
         return false;
     }

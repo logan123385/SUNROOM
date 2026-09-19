@@ -127,6 +127,16 @@ void ProjectManager::joinBackgroundThread() {
         loadThread_.join();
 }
 
+void ProjectManager::invalidatePendingProjectCommit() {
+    // Do not join here. The message thread would wait out an obsolete parse.
+    // The queued commit already compares this revision and skips itself.
+    ++mutationRevision_;
+}
+
+void ProjectManager::beginProjectSession() {
+    ++projectSessionId_;
+}
+
 // ============================================================================
 // Project Lifecycle
 // ============================================================================
@@ -136,6 +146,9 @@ bool ProjectManager::newProject() {
     if (isDirty_ && !showUnsavedChangesDialog()) {
         return false;
     }
+
+    invalidatePendingProjectCommit();
+    beginProjectSession();
 
     resetTransportForProjectBoundary();
 
@@ -279,6 +292,8 @@ bool ProjectManager::loadProject(const juce::File& file,
         return false;
     }
 
+    invalidatePendingProjectCommit();
+
     // Check for autosave recovery
     auto fileToLoad = file;
     auto autosaveFile = getAutosaveFile(file);
@@ -313,6 +328,7 @@ bool ProjectManager::loadProject(const juce::File& file,
     currentProject_.filePath = file.getFullPathName();
     currentFile_ = file;
     isProjectOpen_ = true;
+    beginProjectSession();
 
     // Set media directory beside project file
     juce::String mediaDirName = file.getFileNameWithoutExtension() + "_Media";
@@ -324,13 +340,11 @@ bool ProjectManager::loadProject(const juce::File& file,
     UndoManager::getInstance().clearHistory();
     clearDirty();
 
-    // If we recovered from autosave, mark dirty so the user can save properly
-    if (fileToLoad != file) {
+    // If we recovered from autosave, mark dirty so the user can save properly.
+    // Leave the sidecar in place until that save succeeds. Deleting it here
+    // would drop the only newer copy when the following write fails.
+    if (fileToLoad != file)
         markDirty();
-        autosaveFile.deleteFile();
-    }
-
-    deleteAutosaveFile();
     notifyProjectOpened();
 
     if (onAfterLoad)
@@ -381,8 +395,9 @@ void ProjectManager::importDawProjectAsync(
     ensureMediaSubdirectories(mediaDirectory_);
     const auto importedDir = getImportedDirectory();
 
-    // Join any previous background load before starting a new one.
+    // A commit already queued by the previous load must not apply after this one starts.
     joinBackgroundThread();
+    invalidatePendingProjectCommit();
 
     const auto startingRevision = mutationRevision_;
     auto fileCopy = file;
@@ -418,6 +433,7 @@ void ProjectManager::importDawProjectAsync(
                         currentProject_.filePath = {};
                         currentFile_ = juce::File();
                         isProjectOpen_ = true;
+                        beginProjectSession();
 
                         // An import has never been saved as a .mgd, so it starts dirty
                         // — but the previous project's undo stack still has to go.
@@ -468,8 +484,9 @@ void ProjectManager::loadProjectAsync(const juce::File& file,
     // Capture file path for the background thread
     auto fileCopy = fileToLoad;
 
-    // Join any previous background load before starting a new one
+    // A commit already queued by the previous load must not apply after this one starts.
     joinBackgroundThread();
+    invalidatePendingProjectCommit();
 
     const auto startingRevision = mutationRevision_;
     auto originalFile = file;
@@ -509,6 +526,7 @@ void ProjectManager::loadProjectAsync(const juce::File& file,
                 currentProject_.filePath = originalFile.getFullPathName();
                 currentFile_ = originalFile;
                 isProjectOpen_ = true;
+                beginProjectSession();
 
                 // Set media directory beside project file
                 juce::String mediaDirName = originalFile.getFileNameWithoutExtension() + "_Media";
@@ -520,10 +538,8 @@ void ProjectManager::loadProjectAsync(const juce::File& file,
                 UndoManager::getInstance().clearHistory();
                 clearDirty();
 
-                if (recoveredFromAutosave) {
+                if (recoveredFromAutosave)
                     markDirty();
-                    deleteAutosaveFile();
-                }
 
                 notifyProjectOpened();
 
@@ -542,6 +558,9 @@ bool ProjectManager::closeProject() {
     if (isDirty_ && !showUnsavedChangesDialog()) {
         return false;
     }
+
+    invalidatePendingProjectCommit();
+    beginProjectSession();
 
     deleteAutosaveFile();
 

@@ -95,6 +95,11 @@ class TimelineController {
         return currentInstance_;
     }
 
+    /// Reapply a stored tempo to the timeline, clips, and audio engine.
+    void applyRuntimeTempo(double bpm);
+    /// Reapply a stored time signature to the timeline and audio engine.
+    void applyRuntimeTimeSignature(int numerator, int denominator);
+
     // ===== State Access =====
 
     /**

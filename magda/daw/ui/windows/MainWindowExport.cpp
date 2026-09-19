@@ -12,6 +12,7 @@
 #include "core/TrackManager.hpp"
 #include "engine/AudioEngine.hpp"
 #include "project/ProjectManager.hpp"
+#include "sunroom/SunroomActions.hpp"
 
 namespace magda {
 
@@ -42,6 +43,7 @@ class ExportProgressWindow : public juce::ThreadWithProgressWindow {
         : ThreadWithProgressWindow(trEllipsis("export.progress.exporting_audio"), true, true),
           renderSession_(std::move(renderSession)),
           renderTask_(renderSession_ ? renderSession_->createTask(request) : nullptr),
+          partFile_(request.destination),
           outputFile_(outputFile),
           onComplete_(std::move(onComplete)),
           prerollSeconds_(prerollSeconds),
@@ -73,10 +75,32 @@ class ExportProgressWindow : public juce::ThreadWithProgressWindow {
             errorMessage_ = threadShouldExit() ? errCancelled_ : result.error;
             if (errorMessage_.isEmpty())
                 errorMessage_ = errRenderFailed_;
+            if (partFile_ != outputFile_ && partFile_.existsAsFile())
+                partFile_.deleteFile();
             setStatusMessage(strFailed_);
             return;
         }
 
+        if (!partFile_.existsAsFile()) {
+            errorMessage_ = errFileNotCreated_;
+            setStatusMessage(strFailed_);
+            return;
+        }
+        if (threadShouldExit()) {
+            errorMessage_ = errCancelled_;
+            if (partFile_ != outputFile_ && partFile_.existsAsFile())
+                partFile_.deleteFile();
+            setStatusMessage(strFailed_);
+            return;
+        }
+        if (partFile_ != outputFile_) {
+            if (!partFile_.replaceFileIn(outputFile_)) {
+                errorMessage_ = errFileNotCreated_;
+                partFile_.deleteFile();
+                setStatusMessage(strFailed_);
+                return;
+            }
+        }
         if (!outputFile_.existsAsFile()) {
             errorMessage_ = errFileNotCreated_;
             setStatusMessage(strFailed_);
@@ -104,6 +128,7 @@ class ExportProgressWindow : public juce::ThreadWithProgressWindow {
         auto success = success_;
         auto errorMessage = errorMessage_;
         auto outputFile = outputFile_;
+        auto partFile = partFile_;
         auto onComplete = std::move(onComplete_);
 
         // Delete self first — safe because we've captured everything we need
@@ -114,6 +139,8 @@ class ExportProgressWindow : public juce::ThreadWithProgressWindow {
             if (onComplete)
                 onComplete();
             if (userPressedCancel) {
+                if (partFile.existsAsFile() && partFile != outputFile)
+                    partFile.deleteFile();
                 juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon,
                                                        tr("export.alert.cancelled_title"),
                                                        tr("export.alert.cancelled_body"));
@@ -186,6 +213,7 @@ class ExportProgressWindow : public juce::ThreadWithProgressWindow {
 
     std::unique_ptr<OfflineRenderSession> renderSession_;
     std::unique_ptr<OfflineRenderTask> renderTask_;
+    juce::File partFile_;
     juce::File outputFile_;
     std::function<void()> onComplete_;
     double prerollSeconds_ = 0.0;
@@ -309,6 +337,14 @@ void MainWindow::launchAudioExport(const ExportAudioDialog::Settings& settings,
             // Export range stays musical until the renderer/capture boundary.
             BeatRange requestedRange{{0.0}, {engine->getEditLengthBeats().value}};
             using ExportRange = ExportAudioDialog::ExportRange;
+            const auto* tempoMap = engine->tempoMap();
+            if (tempoMap == nullptr) {
+                juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
+                                                       tr("dialogs.export_audio"),
+                                                       tr("export.error.render_failed"));
+                fileChooser_.reset();
+                return;
+            }
             switch (settings.exportRange) {
                 case ExportRange::TimeSelection:
                     // TODO: Get actual time selection from SelectionManager when implemented
@@ -321,18 +357,24 @@ void MainWindow::launchAudioExport(const ExportAudioDialog::Settings& settings,
                     break;
                 }
 
-                case ExportRange::EntireSong:
-                default:
+                case ExportRange::EntireSong: {
+                    const auto plan = sunroom::planExportSong(*engine, file);
+                    if (plan.refusal.isNotEmpty()) {
+                        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
+                                                               tr("dialogs.export_audio"),
+                                                               plan.refusal);
+                        fileChooser_.reset();
+                        return;
+                    }
+                    requestedRange = {{tempoMap->timeToBeat(plan.startSeconds)},
+                                      {tempoMap->timeToBeat(plan.endSeconds)}};
                     break;
-            }
-
-            const auto* tempoMap = engine->tempoMap();
-            if (tempoMap == nullptr) {
-                juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
-                                                       tr("dialogs.export_audio"),
-                                                       tr("export.error.render_failed"));
-                fileChooser_.reset();
-                return;
+                }
+                default: {
+                    auto never = settings.exportRange;
+                    juce::ignoreUnused(never);
+                    break;
+                }
             }
             const double requestedStart = tempoMap->beatToTime(requestedRange.start.value);
             const double requestedEnd = tempoMap->beatToTime(requestedRange.end.value);
@@ -343,7 +385,8 @@ void MainWindow::launchAudioExport(const ExportAudioDialog::Settings& settings,
             auto launchRender = [this, settings, engine, file, requestedStart, requestedEnd,
                                  resumePlaybackAfterRender]() {
                 OfflineRenderRequest request;
-                request.destination = file;
+                const auto part = file.getSiblingFile(file.getFileName() + ".part");
+                request.destination = part;
                 request.format = settings.format == "FLAC" ? OfflineRenderFormat::Flac
                                                            : OfflineRenderFormat::Wav;
                 request.bitDepth = getBitDepthForFormat(settings.format);

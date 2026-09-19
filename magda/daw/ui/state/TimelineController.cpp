@@ -6,11 +6,75 @@
 #include "../../core/GridDivision.hpp"
 #include "../../core/TempoUtils.hpp"
 #include "../../core/TrackManager.hpp"
+#include "../../core/UndoManager.hpp"
 #include "../../project/ProjectManager.hpp"
 #include "../utils/TimelineUtils.hpp"
 #include "Config.hpp"
 
 namespace magda {
+
+namespace {
+
+class SetTimelineProjectTempoCommand final : public UndoableCommand {
+  public:
+    SetTimelineProjectTempoCommand(double before, double after) : before_(before), after_(after) {}
+
+    void execute() override {
+        if (TimelineController::getCurrent() != nullptr)
+            TimelineController::getCurrent()->applyRuntimeTempo(after_);
+        else
+            ProjectManager::getInstance().setTempo(after_);
+    }
+    void undo() override {
+        if (TimelineController::getCurrent() != nullptr)
+            TimelineController::getCurrent()->applyRuntimeTempo(before_);
+        else
+            ProjectManager::getInstance().setTempo(before_);
+    }
+    juce::String getDescription() const override {
+        return "Set project tempo";
+    }
+
+  private:
+    double before_;
+    double after_;
+};
+
+class SetTimelineProjectTimeSignatureCommand final : public UndoableCommand {
+  public:
+    SetTimelineProjectTimeSignatureCommand(int beforeNumerator, int beforeDenominator,
+                                           int afterNumerator, int afterDenominator)
+        : beforeNumerator_(beforeNumerator),
+          beforeDenominator_(beforeDenominator),
+          afterNumerator_(afterNumerator),
+          afterDenominator_(afterDenominator) {}
+
+    void execute() override {
+        if (TimelineController::getCurrent() != nullptr)
+            TimelineController::getCurrent()->applyRuntimeTimeSignature(afterNumerator_,
+                                                                        afterDenominator_);
+        else
+            ProjectManager::getInstance().setTimeSignature(afterNumerator_, afterDenominator_);
+    }
+    void undo() override {
+        if (TimelineController::getCurrent() != nullptr)
+            TimelineController::getCurrent()->applyRuntimeTimeSignature(beforeNumerator_,
+                                                                        beforeDenominator_);
+        else
+            ProjectManager::getInstance().setTimeSignature(beforeNumerator_, beforeDenominator_);
+    }
+    juce::String getDescription() const override {
+        return "Set time signature";
+    }
+
+  private:
+    int beforeNumerator_;
+    int beforeDenominator_;
+    int afterNumerator_;
+    int afterDenominator_;
+};
+
+}  // namespace
 
 TimelineController::TimelineController() {
     // Set as current instance for global access
@@ -745,16 +809,24 @@ TimelineController::ChangeFlags TimelineController::handleEvent(const SetPunchOu
 // ===== Tempo Event Handlers =====
 
 TimelineController::ChangeFlags TimelineController::handleEvent(const SetTempoEvent& e) {
-    double newBpm = clampBpm(e.bpm);
-    if (newBpm == state.tempo.bpm) {
+    const double newBpm = clampBpm(e.bpm);
+    if (newBpm == state.tempo.bpm)
         return ChangeFlags::None;
-    }
 
-    double oldBpm = state.tempo.bpm;
+    const auto before = ProjectManager::getInstance().getCurrentProjectInfo().tempo;
+    UndoManager::getInstance().executeCommand(
+        std::make_unique<SetTimelineProjectTempoCommand>(before, newBpm));
+    // applyRuntimeTempo already notified listeners.
+    return ChangeFlags::None;
+}
+
+void TimelineController::applyRuntimeTempo(double newBpm) {
+    if (newBpm == state.tempo.bpm)
+        return;
+
+    const double oldBpm = state.tempo.bpm;
     state.tempo.bpm = newBpm;
     state.timelineLength = magda::TimelineUtils::beatsToSeconds(state.timelineLengthBeats, newBpm);
-
-    // Keep ProjectManager in sync for serialization
     ProjectManager::getInstance().setTempo(newBpm);
 
     // Update all beat-anchored positions to maintain bar/beat positions
@@ -915,29 +987,32 @@ TimelineController::ChangeFlags TimelineController::handleEvent(const SetTempoEv
         }
     }
 
-    // Return combined flags for all updated state
-    return static_cast<ChangeFlags>(static_cast<uint32_t>(ChangeFlags::Tempo) | extraFlags);
+    notifyListeners(static_cast<ChangeFlags>(static_cast<uint32_t>(ChangeFlags::Tempo) | extraFlags));
 }
 
 TimelineController::ChangeFlags TimelineController::handleEvent(const SetTimeSignatureEvent& e) {
-    int num = clampTimeSignatureValue(e.numerator);
-    int den = clampTimeSignatureValue(e.denominator);
-
-    if (num == state.tempo.timeSignatureNumerator && den == state.tempo.timeSignatureDenominator) {
+    const int num = clampTimeSignatureValue(e.numerator);
+    const int den = clampTimeSignatureValue(e.denominator);
+    if (num == state.tempo.timeSignatureNumerator && den == state.tempo.timeSignatureDenominator)
         return ChangeFlags::None;
-    }
 
-    state.tempo.timeSignatureNumerator = num;
-    state.tempo.timeSignatureDenominator = den;
+    const auto& before = ProjectManager::getInstance().getCurrentProjectInfo();
+    UndoManager::getInstance().executeCommand(std::make_unique<SetTimelineProjectTimeSignatureCommand>(
+        before.timeSignatureNumerator, before.timeSignatureDenominator, num, den));
+    return ChangeFlags::None;
+}
 
-    ProjectManager::getInstance().setTimeSignature(num, den);
+void TimelineController::applyRuntimeTimeSignature(int numerator, int denominator) {
+    if (numerator == state.tempo.timeSignatureNumerator &&
+        denominator == state.tempo.timeSignatureDenominator)
+        return;
 
-    // Notify audio engine of time signature change
-    for (auto* listener : audioEngineListeners) {
-        listener->onTimeSignatureChanged(num, den);
-    }
-
-    return ChangeFlags::Tempo;
+    state.tempo.timeSignatureNumerator = numerator;
+    state.tempo.timeSignatureDenominator = denominator;
+    ProjectManager::getInstance().setTimeSignature(numerator, denominator);
+    for (auto* listener : audioEngineListeners)
+        listener->onTimeSignatureChanged(numerator, denominator);
+    notifyListeners(ChangeFlags::Tempo);
 }
 
 // ===== Display Event Handlers =====

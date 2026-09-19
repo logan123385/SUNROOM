@@ -68,6 +68,23 @@ doc = dump_project("02b-dump", first)
 names = {t["name"] for t in doc.get("tracks") or []}
 assert {"Drums", "Bass", "Chords"} <= names
 assert "Added drums, bass and chords" in (qa / "02-create-and-play.log").read_text()
+assert "were not applied" in (qa / "02-create-and-play.log").read_text()
+assert "not Session" in (qa / "02-create-and-play.log").read_text()
+assert doc.get("tempo") == 100.0
+assert doc.get("keyRoot") == 9
+fixture = [
+    clip
+    for track in doc.get("tracks") or []
+    for clip in track.get("clips") or []
+    if str(clip.get("name") or "").startswith("Fixture A /")
+]
+assert len(fixture) == 3
+assert {clip.get("view") for clip in fixture} == {"arrangement"}
+assert not any(
+    clip.get("view") == "session"
+    for track in doc.get("tracks") or []
+    for clip in track.get("clips") or []
+)
 
 # Same session: create-and-play then create-and-play again must not double tracks.
 double = saved(

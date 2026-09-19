@@ -27,5 +27,9 @@
 | 2026-09-17 | P7 stages DSL then applies through Interpreter in one undo compound | Console still applies immediately; live model is P8; model text is not an MCP grant |
 | 2026-09-17 | Coach project changes require a SUNROOM_DSL line and Apply | Prose and missing model do not mutate; Hear before/after is undo/redo of that one step only |
 | 2026-09-18 | Starter shelf reads manifest.json only; unknown BPM/key are counted, not guessed | Drums stay unpitched; Media Library semantic search is not replaced; import undo does not delete WAVs |
+| 2026-09-19 | Live P8 copies `~/Library/SUNROOM/sunroom-ai.json` into the test profile | Absolute python/model paths keep weights in place; the isolated profile still proves missing-model copy |
+| 2026-09-19 | `coach-ask` is local MLX only (backend 1) | No silent Luna/cloud fallback; missing install refuses before a request |
+| 2026-09-19 | Export song uses Arrangement clip bounds, never the Session loop fallback | Empty projects refuse; Fixture B preview is 32 bars; Fixture C duration matches 8-bar Arrangement |
+| 2026-09-19 | Export writes a sibling `.part` file and finalizes only on success | Cancel and failed renders leave the destination untouched |
 
 

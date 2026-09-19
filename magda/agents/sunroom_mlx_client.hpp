@@ -21,6 +21,8 @@ class SunroomMlxClient final : public llm::LLMClient {
     // Cancel only companion/coach HTTP streams. Leaves specialist agent requests
     // and the local MLX worker running.
     static void cancelCoachRequests();
+    /** Clear a leftover timed-cancel so the next coach request can start. */
+    static void resetCoachCancellation();
     // App teardown: cancel every stream and stop the local worker.
     static void shutdown();
     /** Does not start the worker or load weights. */

@@ -40,6 +40,7 @@
 #include "../../../core/controllers/ControllerProfileRegistry.hpp"
 #include "../../../core/controllers/ControllerRegistry.hpp"
 #include "../../../project/ProjectManager.hpp"
+#include "../../../sunroom/SunroomActions.hpp"
 #include "../../code/SyntaxTheme.hpp"
 #include "../../components/common/SvgButton.hpp"
 #include "../../dialogs/AISettingsDialog.hpp"
@@ -1123,9 +1124,15 @@ AIChatConsoleContent::AIChatConsoleContent() {
     controllerAgent_ = std::make_unique<magda::ControllerProfileAgent>();
     fourOscAgent_ = std::make_unique<magda::FourOscAgent>();
     themeAgent_ = std::make_unique<magda::ThemeAgent>();
+    magda::sunroom::setAppliedMusicClipObserver(
+        [safe = juce::Component::SafePointer<AIChatConsoleContent>(this)](magda::ClipId clipId) {
+            if (safe != nullptr)
+                safe->rememberGeneratedMidiClip(clipId);
+        });
 }
 
 AIChatConsoleContent::~AIChatConsoleContent() {
+    magda::sunroom::setAppliedMusicClipObserver({});
     magda::MixAnalysisService::getInstance().removeListener(this);
     magda::ViewModeController::getInstance().removeListener(this);
     outputModeButton_.setLookAndFeel(nullptr);
@@ -1231,18 +1238,8 @@ void AIChatConsoleContent::sendMessage(const juce::String& text) {
         auto dslCode = text.trimStart().substring(5).trim();
         appendToChat(juce::String::charToString(0x25CF) + " " + text);
 
-        magda::dsl::Interpreter interpreter(*magdaApi_);
-        bool success = interpreter.execute(dslCode.toRawUTF8());
-
-        if (success) {
-            auto results = interpreter.getResults();
-            if (results.isEmpty())
-                results = "OK";
-            appendToChat(juce::String::charToString(0x25C6) + " " + results);
-        } else {
-            appendToChat(juce::String::charToString(0x25C6) +
-                         " Error: " + juce::String(interpreter.getError()));
-        }
+        const auto results = magda::sunroom::executeManualDsl(*magdaApi_, dslCode);
+        appendToChat(juce::String::charToString(0x25C6) + " " + results);
         clearInput();
         return;
     }
@@ -1705,19 +1702,11 @@ void AIChatConsoleContent::executeDSL() {
     }
 
     // Execute
-    magda::dsl::Interpreter interpreter(*magdaApi_);
-    bool success = interpreter.execute(code.toRawUTF8());
-
-    if (success) {
-        auto results = interpreter.getResults();
-        if (results.isEmpty())
-            results = "OK";
-        appendDSLOutput(results + "\n\n",
-                        DarkTheme::getSyntaxColour(SyntaxColourRole::DSL_OUTPUT_TEXT));
-    } else {
-        appendDSLOutput("Error: " + juce::String(interpreter.getError()) + "\n\n",
-                        DarkTheme::getSyntaxColour(SyntaxColourRole::DSL_OUTPUT_ERROR));
-    }
+    const auto results = magda::sunroom::executeManualDsl(*magdaApi_, code);
+    const bool failed = results.startsWith("Error:");
+    appendDSLOutput(results + "\n\n",
+                    DarkTheme::getSyntaxColour(failed ? SyntaxColourRole::DSL_OUTPUT_ERROR
+                                                      : SyntaxColourRole::DSL_OUTPUT_TEXT));
 
     dslDocument_.replaceAllContent({});
 }

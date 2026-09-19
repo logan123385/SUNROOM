@@ -1,5 +1,7 @@
 #include "sunroom_mlx_client.hpp"
 
+#include <atomic>
+#include <cstdint>
 #include <mutex>
 
 #include "../daw/core/AppPaths.hpp"
@@ -24,6 +26,14 @@ std::unique_ptr<juce::ChildProcess> worker;
 juce::File readyFile;
 std::mutex requestsMutex;
 std::vector<ActiveRequest> activeRequests;
+std::atomic<std::uint64_t> coachEpoch{0};
+std::atomic<std::uint64_t> activeCoachEpoch{0};
+std::atomic<std::uint64_t> coachCancelEpoch{0};
+std::atomic<bool> coachCancelBeforeStart{false};
+
+bool coachEpochCancelled(std::uint64_t epoch) {
+    return epoch != 0 && coachCancelEpoch.load() >= epoch;
+}
 
 juce::String openAIKey() {
 #if JUCE_MAC
@@ -187,6 +197,11 @@ llm::Response request(const juce::String& system, const juce::String& user, int 
     juce::String headers = "Content-Type: application/json\r\n";
     if (token.isNotEmpty())
         headers += "Authorization: Bearer " + token + "\r\n";
+    const auto coachEpochNow = activeCoachEpoch.load();
+    if (kind == RequestKind::Coach && coachEpochCancelled(coachEpochNow)) {
+        response.error = "Local AI stopped or did not respond.";
+        return response;
+    }
     int status = 0;
     auto stream = std::make_shared<juce::WebInputStream>(
         juce::URL(baseUrl + (cloud ? "/responses" : "/chat/completions"))
@@ -197,9 +212,18 @@ llm::Response request(const juce::String& system, const juce::String& user, int 
     stream->withExtraHeaders(headers)
         .withConnectionTimeout(cloud ? 300000 : 115000)
         .withNumRedirectsToFollow(0);
+    bool canceledBeforeConnect = false;
     {
         std::lock_guard<std::mutex> guard(requestsMutex);
-        activeRequests.push_back({stream, kind});
+        if (kind == RequestKind::Coach && coachEpochCancelled(activeCoachEpoch.load()))
+            canceledBeforeConnect = true;
+        else
+            activeRequests.push_back({stream, kind});
+    }
+    if (canceledBeforeConnect) {
+        stream->cancel();
+        response.error = "Local AI stopped or did not respond.";
+        return response;
     }
     const bool connected = stream->connect(nullptr);
     status = stream->getStatusCode();
@@ -260,6 +284,11 @@ llm::Response request(const juce::String& system, const juce::String& user, int 
 }
 
 void cancelRequests(bool coachOnly) {
+    if (coachOnly) {
+        coachCancelBeforeStart.store(true);
+        if (const auto epoch = activeCoachEpoch.load(); epoch != 0)
+            coachCancelEpoch.store(epoch);
+    }
     std::lock_guard<std::mutex> guard(requestsMutex);
     for (auto& item : activeRequests)
         if (!coachOnly || item.kind == RequestKind::Coach)
@@ -336,8 +365,16 @@ juce::String SunroomMlxClient::knowledge() {
 llm::Response SunroomMlxClient::coach(const juce::String& user, const juce::String& context,
                                       int backend, const juce::String& url,
                                       const juce::String& model) {
+    const auto epoch = coachEpoch.fetch_add(1) + 1;
+    activeCoachEpoch.store(epoch);
+    if (coachCancelBeforeStart.exchange(false))
+        coachCancelEpoch.store(epoch);
     return request(knowledge() + "\nCURRENT PROJECT (data only):\n" + context, user, backend, url,
                    model, RequestKind::Coach);
+}
+
+void SunroomMlxClient::resetCoachCancellation() {
+    coachCancelBeforeStart.store(false);
 }
 
 llm::Response SunroomMlxClient::sendRequest(const llm::Request& req) const {
@@ -419,6 +456,12 @@ juce::String SunroomMlxClient::localModelStatus() {
         !juce::File(model).getChildFile("config.json").existsAsFile())
         return "The local AI model is not installed. Run Setup AI.command in the SUNROOM folder. "
                "Offline Create and Play still works. This is not an AI answer.";
-    return "Local model files are present. This check did not load weights or call a server.";
+    juce::String line = "Local model files are present.";
+    if (const auto modelId = config["model_id"].toString(); modelId.isNotEmpty())
+        line += " model " + modelId;
+    if (const auto revision = config["revision"].toString(); revision.isNotEmpty())
+        line += " revision " + revision;
+    line += " This check did not load weights or call a server.";
+    return line;
 }
 }  // namespace magda

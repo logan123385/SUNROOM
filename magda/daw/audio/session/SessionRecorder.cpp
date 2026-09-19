@@ -32,12 +32,9 @@ void SessionRecorder::setArmed(bool armed) {
             if (state == SessionClipPlayState::Playing) {
                 ensureSnapshotTaken();
 
-                double launchTime = edit_.getTransport().position.get().inSeconds();
-                if (getLaunchTime_) {
-                    double precise = getLaunchTime_(clip.trackId);
-                    if (precise > 0.0)
-                        launchTime = precise;
-                }
+                double launchTime = captureArrangementStartSeconds(
+                    edit_.getTransport().position.get().inSeconds(),
+                    getLaunchTime_ ? getLaunchTime_(clip.trackId) : 0.0);
 
                 ActiveRecording rec;
                 rec.sessionClipId = clip.id;

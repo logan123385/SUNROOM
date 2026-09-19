@@ -36,6 +36,13 @@ enum class InputMonitorMode { Off, In, Auto };
 
 enum class TrackPlaybackMode { Arrangement, Session };
 
+/** Session playback only while a session clip is the track's active clip.
+ *  Clearing that clip is what Return to Arrangement uses to restore Arrangement. */
+inline TrackPlaybackMode playbackModeForActiveSessionClip(ClipId activeSessionClipId) {
+    return activeSessionClipId != INVALID_CLIP_ID ? TrackPlaybackMode::Session
+                                                  : TrackPlaybackMode::Arrangement;
+}
+
 /**
  * @brief Track data structure containing all track properties
  */

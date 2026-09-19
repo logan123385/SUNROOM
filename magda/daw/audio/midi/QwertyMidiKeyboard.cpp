@@ -126,9 +126,8 @@ void QwertyMidiKeyboard::sendNoteOff(int note) {
 }
 
 void QwertyMidiKeyboard::allNotesOff() {
-    for (int note : heldNotes_)
+    for (int note : takeHeldKeyboardNotes(heldNotes_))
         sendNoteOff(note);
-    heldNotes_.clear();
 }
 
 bool QwertyMidiKeyboard::keyPressed(const juce::KeyPress& key, juce::Component*) {
@@ -136,13 +135,8 @@ bool QwertyMidiKeyboard::keyPressed(const juce::KeyPress& key, juce::Component*)
         return false;
 
     // Never steal keys from text fields or editable labels.
-    if (auto* focused = juce::Component::getCurrentlyFocusedComponent()) {
-        if (dynamic_cast<juce::TextEditor*>(focused) != nullptr ||
-            focused->findParentComponentOfClass<juce::TextEditor>() != nullptr)
-            return false;
-        if (auto* label = dynamic_cast<juce::Label*>(focused); label != nullptr && label->isEditable())
-            return false;
-    }
+    if (keyboardPlayYieldsToTyping(juce::Component::getCurrentlyFocusedComponent()))
+        return false;
 
     // Always pass through modifier combos
     auto mods = key.getModifiers();
