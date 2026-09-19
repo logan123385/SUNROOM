@@ -1106,40 +1106,59 @@ class Config {
     // Mixer view-toggle rail: per-toggle visibility for the mixer's optional
     // panes. All default off; the user opts in via the left rail.
     bool getMixerShowSends() const {
-        return mixerShowSends_;
+        return !guidedMixerCollapseActive_ && mixerShowSends_;
     }
     void setMixerShowSends(bool v) {
         mixerShowSends_ = v;
     }
     bool getMixerShowRouting() const {
-        return mixerShowRouting_;
+        return !guidedMixerCollapseActive_ && mixerShowRouting_;
     }
     void setMixerShowRouting(bool v) {
         mixerShowRouting_ = v;
     }
     bool getMixerShowMonitor() const {
-        return mixerShowMonitor_;
+        return !guidedMixerCollapseActive_ && mixerShowMonitor_;
     }
     void setMixerShowMonitor(bool v) {
         mixerShowMonitor_ = v;
     }
     bool getMixerShowOscilloscope() const {
-        return mixerShowOscilloscope_;
+        return !guidedMixerCollapseActive_ && mixerShowOscilloscope_;
     }
     void setMixerShowOscilloscope(bool v) {
         mixerShowOscilloscope_ = v;
     }
     bool getMixerShowSpectrum() const {
-        return mixerShowSpectrum_;
+        return !guidedMixerCollapseActive_ && mixerShowSpectrum_;
     }
     void setMixerShowSpectrum(bool v) {
         mixerShowSpectrum_ = v;
     }
     bool getMixerShowFxChain() const {
-        return mixerShowFxChain_;
+        return !guidedMixerCollapseActive_ && mixerShowFxChain_;
     }
     void setMixerShowFxChain(bool v) {
         mixerShowFxChain_ = v;
+    }
+
+    // Session-only. Guided Mix hides the optional rows without writing Config.
+    // A rail click clears it for the rest of the session.
+    void beginGuidedMixerPresentation() {
+        if (!guidedMixerUserExpanded_)
+            guidedMixerCollapseActive_ = true;
+    }
+    void clearGuidedMixerPresentation() {
+        guidedMixerCollapseActive_ = false;
+        guidedMixerUserExpanded_ = true;
+    }
+    juce::String guidedMixerPresentationReport() const {
+        auto bit = [](bool value) { return value ? juce::String("1") : juce::String("0"); };
+        return "stored-sends " + bit(mixerShowSends_) + " presented-sends " +
+               bit(getMixerShowSends()) + " stored-spectrum " + bit(mixerShowSpectrum_) +
+               " presented-spectrum " + bit(getMixerShowSpectrum()) + " stored-routing " +
+               bit(mixerShowRouting_) + " presented-routing " + bit(getMixerShowRouting()) +
+               " config-write no";
     }
 
     // Session view-toggle rail: independent from the mixer rail even where the
@@ -1405,6 +1424,8 @@ class Config {
     bool mixerShowOscilloscope_ = false;
     bool mixerShowSpectrum_ = false;
     bool mixerShowFxChain_ = false;
+    bool guidedMixerCollapseActive_ = false;
+    bool guidedMixerUserExpanded_ = false;
     bool sessionShowSends_ = false;
     bool sessionShowRouting_ = false;
     bool sessionShowMonitor_ = false;

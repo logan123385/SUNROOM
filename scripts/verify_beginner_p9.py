@@ -167,6 +167,23 @@ escape = run(
 assert escape.returncode != 0
 assert "Nothing was added" in (escape.stdout + escape.stderr)
 
+preview = run(
+    "04b-preview",
+    "exec",
+    blank,
+    "preview-sample",
+    "Heartbeat 01.wav",
+    "dump",
+    "--json",
+    "--out",
+    qa / "Preview.mgd",
+)
+assert "Preview only: Heartbeat 01" in preview.stdout
+assert "Not added to the song" in preview.stdout
+assert "Headless playback is not this command" in preview.stdout
+assert "Heartbeat 01" not in track_names(project_json(preview))
+assert source.is_file()
+
 imported = run(
     "05-import",
     "exec",

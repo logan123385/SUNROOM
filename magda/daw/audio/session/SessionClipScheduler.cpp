@@ -523,8 +523,7 @@ void SessionClipScheduler::syncTrackPlaybackModes() {
     auto& tm = TrackManager::getInstance();
 
     for (const auto& track : tm.getTracks()) {
-        auto mode = (track.activeSessionClipId != INVALID_CLIP_ID) ? TrackPlaybackMode::Session
-                                                                   : TrackPlaybackMode::Arrangement;
+        auto mode = playbackModeForActiveSessionClip(track.activeSessionClipId);
         tm.setTrackPlaybackMode(track.id, mode);
     }
 }

@@ -17,6 +17,7 @@
 #include "../core/TrackInfo.hpp"
 #include "../core/TrackPropertyCommands.hpp"
 #include "../core/TrackTypes.hpp"
+#include "../project/ProjectManager.hpp"
 #include "../project/ProjectInfo.hpp"
 #include "automation_api.hpp"
 #include "clip_api.hpp"
@@ -262,6 +263,179 @@ bool targetResolves(MagdaApi& api, const AutomationTarget& target) {
     return false;
 }
 
+class SetProjectTempoCommand final : public UndoableCommand {
+  public:
+    SetProjectTempoCommand(double before, double after) : before_(before), after_(after) {}
+
+    void execute() override {
+        ProjectManager::getInstance().setTempo(after_);
+    }
+    void undo() override {
+        ProjectManager::getInstance().setTempo(before_);
+    }
+    juce::String getDescription() const override {
+        return "Set project tempo";
+    }
+
+  private:
+    double before_;
+    double after_;
+};
+
+class SetProjectTimeSignatureCommand final : public UndoableCommand {
+  public:
+    SetProjectTimeSignatureCommand(int beforeNumerator, int beforeDenominator, int afterNumerator,
+                                   int afterDenominator)
+        : beforeNumerator_(beforeNumerator),
+          beforeDenominator_(beforeDenominator),
+          afterNumerator_(afterNumerator),
+          afterDenominator_(afterDenominator) {}
+
+    void execute() override {
+        ProjectManager::getInstance().setTimeSignature(afterNumerator_, afterDenominator_);
+    }
+    void undo() override {
+        ProjectManager::getInstance().setTimeSignature(beforeNumerator_, beforeDenominator_);
+    }
+    juce::String getDescription() const override {
+        return "Set time signature";
+    }
+
+  private:
+    int beforeNumerator_;
+    int beforeDenominator_;
+    int afterNumerator_;
+    int afterDenominator_;
+};
+
+class SetRackBypassedCommand final : public UndoableCommand {
+  public:
+    SetRackBypassedCommand(TrackId trackId, RackId rackId, bool before, bool after)
+        : trackId_(trackId), rackId_(rackId), before_(before), after_(after) {}
+
+    void execute() override {
+        TrackManager::getInstance().setRackBypassed(trackId_, rackId_, after_);
+    }
+    void undo() override {
+        TrackManager::getInstance().setRackBypassed(trackId_, rackId_, before_);
+    }
+    juce::String getDescription() const override {
+        return "Set rack bypass";
+    }
+
+  private:
+    TrackId trackId_;
+    RackId rackId_;
+    bool before_;
+    bool after_;
+};
+
+class RemoveRackFromTrackCommand final : public UndoableCommand {
+  public:
+    RemoveRackFromTrackCommand(TrackId trackId, RackId rackId)
+        : trackId_(trackId), rackId_(rackId) {}
+
+    void execute() override {
+        removed_ = false;
+        auto* track = TrackManager::getInstance().getTrack(trackId_);
+        if (track == nullptr)
+            return;
+        auto& elements = track->chain.fxChainElements;
+        for (size_t index = 0; index < elements.size(); ++index) {
+            if (!isRack(elements[index]) || getRack(elements[index]).id != rackId_)
+                continue;
+            saved_ = getRack(elements[index]);
+            index_ = static_cast<int>(index);
+            elements.erase(elements.begin() + static_cast<std::ptrdiff_t>(index));
+            TrackManager::getInstance().notifyTrackDevicesChanged(trackId_);
+            removed_ = true;
+            return;
+        }
+    }
+
+    void undo() override {
+        if (!removed_)
+            return;
+        auto* track = TrackManager::getInstance().getTrack(trackId_);
+        if (track == nullptr)
+            return;
+        auto& elements = track->chain.fxChainElements;
+        const auto index = juce::jlimit(0, static_cast<int>(elements.size()), index_);
+        elements.insert(elements.begin() + index, makeRackElement(saved_));
+        TrackManager::getInstance().notifyTrackDevicesChanged(trackId_);
+    }
+
+    juce::String getDescription() const override {
+        return "Remove rack";
+    }
+
+  private:
+    TrackId trackId_;
+    RackId rackId_;
+    RackInfo saved_;
+    int index_ = 0;
+    bool removed_ = false;
+};
+
+class AddRackToTrackCommand final : public UndoableCommand {
+  public:
+    AddRackToTrackCommand(TrackId trackId, juce::String name)
+        : trackId_(trackId), name_(std::move(name)) {}
+
+    void execute() override {
+        auto& tracks = TrackManager::getInstance();
+        if (createdId_ == INVALID_RACK_ID) {
+            createdId_ = tracks.addRackToTrack(trackId_, name_);
+            return;
+        }
+        if (!haveSaved_)
+            return;
+        auto* track = tracks.getTrack(trackId_);
+        if (track == nullptr)
+            return;
+        auto& elements = track->chain.fxChainElements;
+        const auto index = juce::jlimit(0, static_cast<int>(elements.size()), index_);
+        elements.insert(elements.begin() + index, makeRackElement(saved_));
+        tracks.notifyTrackDevicesChanged(trackId_);
+    }
+
+    void undo() override {
+        if (createdId_ == INVALID_RACK_ID)
+            return;
+        auto& tracks = TrackManager::getInstance();
+        auto* track = tracks.getTrack(trackId_);
+        if (track == nullptr)
+            return;
+        auto& elements = track->chain.fxChainElements;
+        for (size_t index = 0; index < elements.size(); ++index) {
+            if (!isRack(elements[index]) || getRack(elements[index]).id != createdId_)
+                continue;
+            saved_ = getRack(elements[index]);
+            haveSaved_ = true;
+            index_ = static_cast<int>(index);
+            elements.erase(elements.begin() + static_cast<std::ptrdiff_t>(index));
+            tracks.notifyTrackDevicesChanged(trackId_);
+            return;
+        }
+    }
+
+    juce::String getDescription() const override {
+        return "Add rack";
+    }
+
+    RackId getCreatedRackId() const {
+        return createdId_;
+    }
+
+  private:
+    TrackId trackId_;
+    juce::String name_;
+    RackId createdId_ = INVALID_RACK_ID;
+    RackInfo saved_;
+    int index_ = 0;
+    bool haveSaved_ = false;
+};
+
 }  // namespace
 
 // ===========================================================================
@@ -281,14 +455,20 @@ HandlerResult projectGet(MagdaApi& api, const juce::var&, const RequestContext&)
 }
 
 HandlerResult projectSetTempo(MagdaApi& api, const juce::var& input, const RequestContext&) {
-    api.project().setTempo(static_cast<double>(input["tempo"]));
+    const auto tempo = static_cast<double>(input["tempo"]);
+    const auto before = ProjectManager::getInstance().getCurrentProjectInfo().tempo;
+    runCommand<SetProjectTempoCommand>(api, before, tempo);
     return HandlerResult::ok(toJson(makeProjectDto(api.project().getCurrentProjectInfo())));
 }
 
 HandlerResult projectSetTimeSignature(MagdaApi& api, const juce::var& input,
                                       const RequestContext&) {
-    api.project().setTimeSignature(static_cast<int>(input["numerator"]),
-                                   static_cast<int>(input["denominator"]));
+    const auto numerator = static_cast<int>(input["numerator"]);
+    const auto denominator = static_cast<int>(input["denominator"]);
+    const auto& before = ProjectManager::getInstance().getCurrentProjectInfo();
+    runCommand<SetProjectTimeSignatureCommand>(api, before.timeSignatureNumerator,
+                                               before.timeSignatureDenominator, numerator,
+                                               denominator);
     return HandlerResult::ok(toJson(makeProjectDto(api.project().getCurrentProjectInfo())));
 }
 
@@ -494,7 +674,9 @@ HandlerResult racksCreate(MagdaApi& api, const juce::var& input, const RequestCo
     const auto trackId = static_cast<TrackId>(static_cast<int>(input["trackId"]));
     if (api.tracks().getTrack(trackId) == nullptr)
         return notFound("track", trackId);
-    const auto id = api.tracks().addRackToTrack(trackId, input["name"].toString());
+    const auto id = runCommandAndRead<AddRackToTrackCommand>(
+        api, [](const AddRackToTrackCommand& command) { return command.getCreatedRackId(); },
+        trackId, input["name"].toString());
     if (id == INVALID_RACK_ID)
         return HandlerResult::fail(ErrorCode::InternalError, "rack creation failed");
     return HandlerResult::ok(idResult(id));
@@ -505,7 +687,7 @@ HandlerResult racksRemove(MagdaApi& api, const juce::var& input, const RequestCo
     const auto rackId = static_cast<RackId>(static_cast<int>(input["rackId"]));
     if (api.tracks().getRack(trackId, rackId) == nullptr)
         return notFound("rack", rackId);
-    api.tracks().removeRackFromTrack(trackId, rackId);
+    runCommand<RemoveRackFromTrackCommand>(api, trackId, rackId);
     return HandlerResult::ok(acceptedResult());
 }
 
@@ -514,7 +696,9 @@ HandlerResult racksSetBypassed(MagdaApi& api, const juce::var& input, const Requ
     const auto rackId = static_cast<RackId>(static_cast<int>(input["rackId"]));
     if (api.tracks().getRack(trackId, rackId) == nullptr)
         return notFound("rack", rackId);
-    api.tracks().setRackBypassed(trackId, rackId, static_cast<bool>(input["bypassed"]));
+    const bool before = api.tracks().getRack(trackId, rackId)->bypassed;
+    runCommand<SetRackBypassedCommand>(api, trackId, rackId, before,
+                                       static_cast<bool>(input["bypassed"]));
 
     // Project the rack through the shared graph builder rather than hand-rolling
     // a second RackDto projection that could drift from it.

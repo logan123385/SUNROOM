@@ -1392,6 +1392,17 @@ void MediaExplorerContent::setAudioEngine(magda::AudioEngine* engine) {
     }
 }
 
+bool MediaExplorerContent::previewFile(const juce::File& file) {
+    if (!file.existsAsFile() || audioEngine_ == nullptr ||
+        audioEngine_->getDeviceManager() == nullptr || transportSource_ == nullptr)
+        return false;
+    loadFileForPreview(file);
+    if (currentPreviewFile_ != file)
+        return false;
+    playPreview();
+    return isPlaying_;
+}
+
 void MediaExplorerContent::setupAudioPreview() {
     // Register audio formats
     formatManager_.registerBasicFormats();

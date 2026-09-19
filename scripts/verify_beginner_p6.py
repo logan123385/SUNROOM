@@ -61,6 +61,13 @@ def dump_project(name: str, project: pathlib.Path) -> dict:
     raise AssertionError(f"{name}: missing dump-json")
 
 
+findings = call("00-analyze-findings", "analyze-findings")
+assert "LEVELS (1 tracks)" in findings
+assert "LUFS" in findings
+assert "Drums vs Bass" in findings
+assert "has-score no" in findings
+assert "score" not in findings.split("has-score")[0].lower()
+
 blank = saved(call("01-init", "init", qa / "Blank.mgd"))
 song = saved(call("02-fixture-a", "exec", blank, "fixture-a", "--out", qa / "Starter.mgd"))
 spaced = saved(
@@ -115,13 +122,36 @@ doc_u = dump_project("05b-dump", undone)
 aux_u = [t for t in doc_u.get("tracks") or [] if t.get("name") == "Shared Space" or t.get("type") == "aux"]
 assert len(aux_u) == 0, "undo should remove the created Shared Space return"
 
+presentation_config = qa / "presentation-config.json"
+presentation_config.write_text(
+    '{"mixerShowSends": true, "mixerShowSpectrum": true, "mixerShowRouting": true}\n'
+)
+before_config = presentation_config.read_bytes()
+presentation_env = env.copy()
+presentation_env["MAGDA_CONFIG_FILE"] = str(presentation_config)
+presentation = subprocess.run(
+    [str(cli), "exec", str(song), "mixer-presentation", "--out", str(qa / "Presentation.mgd")],
+    env=presentation_env,
+    capture_output=True,
+    text=True,
+    timeout=300,
+)
+(qa / "06-presentation.log").write_text(presentation.stdout + "\n" + presentation.stderr)
+assert presentation.returncode == 0, presentation.stderr[-800:]
+report = presentation.stdout
+assert "stored-sends 1" in report and "presented-sends 0" in report
+assert "stored-spectrum 1" in report and "presented-spectrum 0" in report
+assert "stored-routing 1" in report and "presented-routing 0" in report
+assert "config-write no" in report
+assert presentation_config.read_bytes() == before_config
+
 result = {
     "phase": "P6",
     "status": "PASS",
     "records": records,
     "gates": {
-        "open_mix": "code path - ViewMode::Mix via onShowMix",
-        "analyze": "code path - MixerToggleRail Analyze unchanged",
+        "open_mix": "guided presentation hides stored sends/spectrum/routing without rewriting config",
+        "analyze": "button opens offline modal that calls runOffline; formatMixFindings shows LUFS/peak/collisions and no score; measurement itself not run",
         "shared_space_return": "CLI space-return creates/reuses one Aux+magda_reverb",
         "send_not_wetdry": "summary states send amount",
         "gui_audible_mix": "not run - Xcode license / app relink",

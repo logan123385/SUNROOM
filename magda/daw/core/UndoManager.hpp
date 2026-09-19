@@ -51,6 +51,14 @@ class UndoableCommand {
      * Only called if canMergeWith returned true.
      */
     virtual void mergeWith(const UndoableCommand* /*other*/) {}
+
+    /**
+     * True when execute() rolled its own changes back and the command must not
+     * become undo history. Default commands are recorded.
+     */
+    virtual bool failed() const {
+        return false;
+    }
 };
 
 /**
@@ -204,6 +212,9 @@ class UndoManager {
 
     std::deque<HistoryEntry> undoStack_;
     std::deque<HistoryEntry> redoStack_;
+    // Keeps a rejected command alive until the next execute so the caller can
+    // still read failureReason() on the pointer it retained.
+    std::unique_ptr<UndoableCommand> rejected_;
 
     // Compound operation support
     int compoundDepth_ = 0;

@@ -1,9 +1,26 @@
 # Beginner experience — repository inventory (P0)
 
 **Repo:** SUNROOM fork of MAGDA (`logan123385/magda-core`, branch `codex/sunroom`)  
-**Baseline revision inspected:** `92edd84` (+ uncommitted beginner first-session edits in `magda/daw/sunroom/*`)  
-**Date:** 2026-09-17  
-**Method:** static path/symbol inspection + headless baseline commands. GUI app launch **not run** (Xcode license / sandbox).
+**Baseline revision:** `f6b5edb` (2026-09-18), merged to `main` as `90bacab` via PR #1  
+**Date:** 2026-09-18  
+**Method:** git/build inspection + one refreshed headless script. Native app launch **not run**.
+
+### Build provenance (this reconciliation)
+
+| Item | Value |
+|---|---|
+| Branch | `codex/sunroom`, tracking `origin/codex/sunroom` |
+| HEAD | `f6b5edb26712ba1d82b4e6bfb68336b5bb951eb4` |
+| Dirty tracked files | `scripts/verify_beginner_p5.py` (assertion fix, not yet committed); `third_party/tracktion_engine` working tree dirty, pointer still `f7a2eb9` |
+| Untracked, not part of the product | `CURSOR_GROK_4_6_HANDOFF.md`, `docs/beginner-experience/SUNROOM_Cursor_Auto_*.md`, `tmp/` |
+| Generator | Ninja, `CMAKE_BUILD_TYPE=Release`, `CMAKE_CXX_COMPILER=/usr/bin/c++` |
+| Compiler check | `/usr/bin/c++ --version` returned Apple clang 21.0.0. The earlier licence block is not currently reproducing. |
+| Ninja | `ninja -C build-sunroom -n magda_cli` warned `premature end of file; recovering` and would re-run CMake. No configure or compile was started. |
+| CLI used for the P5 rerun | `build-sunroom/magda/daw/magda_cli_artefacts/Release/magda_cli` |
+| CLI identity at P5 | mtime 2026-09-18 13:57:26, sha256 `95c0f512235b7c914b15d530b2fbd0d08c21d1dcbf6fb620a175c15e681866b7` |
+| CLI identity after P1 slice | mtime 2026-09-18 14:22:43, sha256 `f8247c2d92482ab85ee42ae6bab12787499684e068d04f66e709bf02e25f5f39`. Manual clang++ link, not a ninja stamp. |
+| CLI vs source | Linked after the C++ files in `f6b5edb` were written and before any later C++ edit. It can verify those sources. It is not a ninja stamp of HEAD. |
+| App | `build-sunroom/magda/daw/magda_daw_app_artefacts/Release/SUNROOM.app/Contents/MacOS/SUNROOM`, mtime 2026-09-17 20:59:08. Older than `f6b5edb`. Cannot verify current source. |
 
 Source scope: `Magda_DAW_Beginner_Feature_Gaps.pdf` (M1–M5, S1–S6). Execution: `Magda_Cursor_Auto_Implementation_Plan.md`, `Magda_Cursor_Auto_Phase_Prompts.md`.
 
@@ -82,11 +99,13 @@ Build tree: `build-sunroom` (Ninja Release). Targets: `magda_daw_app`, `magda_cl
 
 ---
 
-## Smallest P1 slice (justified)
+## Next required proof
 
-Prove **one grouped undoable clip/journey insertion → save → reopen → undo** through existing infrastructure, using Fixture A timing (or current SUNROOM journey as stand-in until Fixture A lands in P2).
+The 2026-09-17 journey insert → undo → redo → save → reopen path still stands as **headless evidence only** (`scripts/verify_beginner_p1.py`). It does not accept P1. Missing-media and recovery-write checks in that script passed on 2026-09-18 and still do not accept native recovery.
 
-**Status (2026-09-17):** complete for headless path via `scripts/verify_beginner_p1.py` (14 clips; undo→0; redo/reopen/recover fingerprints match). GUI autosave prompt still pending.
+**Next required proof:** the chat panel still reads the generated clip id from execute. Native autosave prompt remains not run.
+
+**Proven this slice:** `ConsoleAgentResultExecutor` stages automation IR on the same proposal. A volume line had zero points until apply, which then wrote the curve. No model was loaded. Those point writes do not go through undo, so undo of the curve was not claimed. The chat panel was not recompiled.
 
 **Touchpoints:**
 1. `UndoManager::executeCommand` + `CompoundCommand` (or existing `CreateJourneyCommand` group)

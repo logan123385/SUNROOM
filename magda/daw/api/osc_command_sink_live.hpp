@@ -116,4 +116,7 @@ class OscBindingSinkLive : public osc::OscBindingSink {
     std::unordered_map<juce::String, ToggleState> toggleState_;
 };
 
+/// Hardware tempo write. Uses the project facade and records undo. Not a proposal.
+void applySurfaceTempo(MagdaApi& api, float bpm);
+
 }  // namespace magda

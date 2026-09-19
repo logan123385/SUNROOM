@@ -79,8 +79,205 @@ def names(doc):
 
 
 blank = saved(run("01-init", "init", qa / "Blank.mgd").stdout)
+blank_doc = dump_project("01b-dump", blank)
+tempo_restored = run(
+    "01c-remote-tempo",
+    "exec",
+    blank,
+    "set-tempo",
+    "90",
+    "undo",
+    "--out",
+    qa / "TempoRestored.mgd",
+)
+assert "tempo 90.0" in tempo_restored.stdout
+assert "undo Set project tempo" in tempo_restored.stdout
+assert "Undid: Set project tempo" in tempo_restored.stdout
+restored_doc = dump_project("01d-dump", saved(tempo_restored.stdout))
+assert abs(float(restored_doc["tempo"]) - float(blank_doc["tempo"])) < 0.01
+
+signature_restored = run(
+    "01e-remote-signature",
+    "exec",
+    blank,
+    "set-time-signature",
+    "7",
+    "8",
+    "undo",
+    "--out",
+    qa / "SignatureRestored.mgd",
+)
+assert "signature 7/8" in signature_restored.stdout
+assert "undo Set time signature" in signature_restored.stdout
+assert "Undid: Set time signature" in signature_restored.stdout
+signature_doc = dump_project("01f-dump", saved(signature_restored.stdout))
+assert signature_doc["timeSignatureNumerator"] == blank_doc["timeSignatureNumerator"]
+assert signature_doc["timeSignatureDenominator"] == blank_doc["timeSignatureDenominator"]
+
+osc_restored = run(
+    "01g-osc-tempo",
+    "exec",
+    blank,
+    "osc-tempo",
+    "90",
+    "undo",
+    "--out",
+    qa / "OscTempo.mgd",
+)
+assert "osc-tempo 90.0" in osc_restored.stdout
+assert "undo Set project tempo" in osc_restored.stdout
+assert "Undid: Set project tempo" in osc_restored.stdout
+assert "Proposal" not in osc_restored.stdout
+osc_doc = dump_project("01h-dump", saved(osc_restored.stdout))
+assert abs(float(osc_doc["tempo"]) - float(blank_doc["tempo"])) < 0.01
+
+timeline_restored = run(
+    "01i-timeline-tempo",
+    "exec",
+    blank,
+    "timeline-tempo",
+    "90",
+    "undo",
+    "--out",
+    qa / "TimelineTempo.mgd",
+)
+assert "timeline-tempo 90.0" in timeline_restored.stdout
+assert "undo Set project tempo" in timeline_restored.stdout
+assert "Undid: Set project tempo" in timeline_restored.stdout
+timeline_doc = dump_project("01j-dump", saved(timeline_restored.stdout))
+assert abs(float(timeline_doc["tempo"]) - float(blank_doc["tempo"])) < 0.01
+
+timeline_sig = run(
+    "01k-timeline-signature",
+    "exec",
+    blank,
+    "timeline-signature",
+    "7",
+    "8",
+    "undo",
+    "--out",
+    qa / "TimelineSignature.mgd",
+)
+assert "timeline-signature 7/8" in timeline_sig.stdout
+assert "undo Set time signature" in timeline_sig.stdout
+assert "Undid: Set time signature" in timeline_sig.stdout
+timeline_sig_doc = dump_project("01l-dump", saved(timeline_sig.stdout))
+assert timeline_sig_doc["timeSignatureNumerator"] == blank_doc["timeSignatureNumerator"]
+assert timeline_sig_doc["timeSignatureDenominator"] == blank_doc["timeSignatureDenominator"]
+
+direct = run(
+    "01m-direct-dsl",
+    "exec",
+    blank,
+    "direct-dsl",
+    "project.set(bpm=90)",
+    "undo",
+    "--out",
+    qa / "DirectDsl.mgd",
+)
+assert "direct" in direct.stdout
+assert "proposal no" in direct.stdout
+assert "tempo 90.0" in direct.stdout
+assert "Proposal " not in direct.stdout
+assert "Undid: Set project tempo" in direct.stdout
+direct_doc = dump_project("01n-dump", saved(direct.stdout))
+assert abs(float(direct_doc["tempo"]) - float(blank_doc["tempo"])) < 0.01
+
+agent_staged = run(
+    "01o-agent-dsl-stage",
+    "exec",
+    blank,
+    "agent-dsl-stage",
+    "project.set(bpm=90)",
+    "apply-proposal",
+    "undo",
+    "--out",
+    qa / "AgentDsl.mgd",
+)
+assert "Staged" in agent_staged.stdout
+assert "Not applied" in agent_staged.stdout
+assert "proposal yes" in agent_staged.stdout
+assert f"tempo {float(blank_doc['tempo']):.1f}" in agent_staged.stdout
+assert "Applied:" in agent_staged.stdout
+assert "Undid: Apply suggestion" in agent_staged.stdout
+agent_doc = dump_project("01p-dump", saved(agent_staged.stdout))
+assert abs(float(agent_doc["tempo"]) - float(blank_doc["tempo"])) < 0.01
+
+music_staged = run(
+    "01q-agent-music-stage",
+    "exec",
+    blank,
+    "agent-music-stage",
+    "MusicStage",
+    "apply-proposal",
+    "undo",
+    "--out",
+    qa / "AgentMusic.mgd",
+)
+assert "Staged" in music_staged.stdout
+assert "Not applied" in music_staged.stdout
+assert "proposal yes" in music_staged.stdout
+assert "track no" in music_staged.stdout
+assert "Applied:" in music_staged.stdout
+assert "Created track 'MusicStage'" in music_staged.stdout
+assert "Undid: Apply suggestion" in music_staged.stdout
+music_doc = dump_project("01r-dump", saved(music_staged.stdout))
+assert names(music_doc) == names(blank_doc)
+
+automation_staged = run(
+    "01s-agent-automation-stage",
+    "exec",
+    blank,
+    "add-track",
+    "audio",
+    "Host",
+    "select-track",
+    "1",
+    "agent-automation-stage",
+    "apply-proposal",
+    "--out",
+    qa / "AgentAuto.mgd",
+)
+assert "Staged" in automation_staged.stdout
+assert "Not applied" in automation_staged.stdout
+assert "proposal yes" in automation_staged.stdout
+assert "points 0" in automation_staged.stdout
+assert automation_staged.stdout.index("points 0") < automation_staged.stdout.index("Applied:")
+assert "Wrote" in automation_staged.stdout
+
 starter = saved(run("02-fixture-a", "exec", blank, "fixture-a", "--out", qa / "Starter.mgd").stdout)
 starter_bytes = starter.read_bytes()
+rack = run(
+    "02b-rack-bypass",
+    "exec",
+    starter,
+    "rack-bypass-undo",
+    "--out",
+    qa / "RackBypass.mgd",
+)
+assert "bypass 1" in rack.stdout
+assert "undo Set rack bypass" in rack.stdout
+assert "restored 0" in rack.stdout
+removed = run(
+    "02c-rack-remove",
+    "exec",
+    starter,
+    "rack-remove-undo",
+    "--out",
+    qa / "RackRemoved.mgd",
+)
+assert "removed undo Remove rack" in removed.stdout
+assert "restored Remove Test" in removed.stdout
+created = run(
+    "02d-rack-create",
+    "exec",
+    starter,
+    "rack-create-undo",
+    "--out",
+    qa / "RackCreated.mgd",
+)
+assert "created Create Test undo Add rack" in created.stdout
+assert "undo removed" in created.stdout
 
 applied = run(
     "03-apply",

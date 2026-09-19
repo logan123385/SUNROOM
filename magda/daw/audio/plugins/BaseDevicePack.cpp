@@ -289,7 +289,7 @@ void registerNativeDevices(InternalPluginRegistry& registry) {
          .createProcessor = makeProcessor<MagdaSamplerProcessor>,
          .showInBrowser = true,
          .isInstrument = true,
-         .createInSession = createFreshValueTreePlugin,
+         .createInSession = createValueTreePlugin,
          .createPlugin = createPlugin<MagdaSamplerPlugin>});
     add(registry,
         {.pluginId = DrumGridPlugin::xmlTypeName,

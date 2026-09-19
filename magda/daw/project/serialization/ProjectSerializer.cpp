@@ -902,12 +902,18 @@ void ProjectSerializer::installStagedSources(const std::vector<Source>& sources,
 void ProjectSerializer::resolveStagedSources(const std::vector<Source>& sources) {
     auto& pool = SourcePool::getInstance();
     for (const auto& source : sources) {
-        // A project saved while the file was missing carries sampleRate 0, so
-        // its events' anchors were computed at the nominal rate. Re-probing now
-        // resolves the source, and the pool's rate-change handler rescales
-        // them: this runs after the clips are committed so those events exist.
-        if (!source.isResolved())
-            pool.resolveFacts(source.id);
+        auto* live = pool.getMutable(source.id);
+        if (live == nullptr)
+            continue;
+        // A path that used to resolve can go missing after the save. Do not keep
+        // the old sample rate: that would claim the file is still readable.
+        if (juce::File::isAbsolutePath(live->filePath) &&
+            !juce::File(live->filePath).existsAsFile()) {
+            live->sampleRate = 0.0;
+            continue;
+        }
+        if (!live->isResolved())
+            pool.resolveFacts(live->id);
     }
 }
 

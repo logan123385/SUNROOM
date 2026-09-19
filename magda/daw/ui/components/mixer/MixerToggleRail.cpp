@@ -100,6 +100,7 @@ void MixerToggleRail::setupButton(std::unique_ptr<SvgButton>& btn, const juce::S
     applyToggleState(btn.get(), initialState);
 
     btn->onClick = [this, raw = btn.get(), setter = std::move(setter)]() {
+        Config::getInstance().clearGuidedMixerPresentation();
         bool newState = !raw->isActive();
         setter(newState);
         applyToggleState(raw, newState);
@@ -118,6 +119,16 @@ void MixerToggleRail::applyToggleState(SvgButton* btn, bool on) {
     const auto base = DarkTheme::getColour(DarkTheme::TEXT_SECONDARY);
     btn->setNormalColor(on ? base : base.withAlpha(0.3f));
     btn->repaint();
+}
+
+void MixerToggleRail::syncFromConfig() {
+    auto& cfg = Config::getInstance();
+    applyToggleState(sendsButton_.get(), cfg.getMixerShowSends());
+    applyToggleState(routingButton_.get(), cfg.getMixerShowRouting());
+    applyToggleState(monitorButton_.get(), cfg.getMixerShowMonitor());
+    applyToggleState(oscilloscopeButton_.get(), cfg.getMixerShowOscilloscope());
+    applyToggleState(spectrumButton_.get(), cfg.getMixerShowSpectrum());
+    applyToggleState(fxChainButton_.get(), cfg.getMixerShowFxChain());
 }
 
 // ---------------------------------------------------------------------------
@@ -139,7 +150,8 @@ void MixerToggleRail::setupAnalyzeButton() {
         DarkTheme::getColour(DarkTheme::ACCENT_INFO).withAlpha(0.25f));
     analyzeButton_->setBorderColor(DarkTheme::getColour(DarkTheme::BORDER));
     analyzeButton_->setBorderThickness(1.0f);
-    analyzeButton_->setTooltip("Analyze the mix");
+    analyzeButton_->setTooltip(
+            "Measure levels and frequency collisions for the current mix. Not a mix score.");
     analyzeButton_->setWantsKeyboardFocus(false);
     // One action: analyse the selection via an offline render. (Live capture is
     // implemented in MixAnalysisService/MixAnalysisModal but deliberately not
@@ -173,7 +185,8 @@ void MixerToggleRail::updateAnalyzeButtonMode() {
         analyzeButton_->updateSvgData(BinaryData::iconcheckmixboldm_svg,
                                       BinaryData::iconcheckmixboldm_svgSize);
         analyzeButton_->setActive(false);
-        analyzeButton_->setTooltip("Analyze the mix");
+        analyzeButton_->setTooltip(
+            "Measure levels and frequency collisions for the current mix. Not a mix score.");
         // Dim to the disengaged-toggle look until there's an analysis to show;
         // brighten once data exists (matches the other rail buttons' on/off weight).
         const auto base = DarkTheme::getColour(DarkTheme::TEXT_SECONDARY);

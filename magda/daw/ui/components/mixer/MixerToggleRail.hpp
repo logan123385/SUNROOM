@@ -31,6 +31,8 @@ class MixerToggleRail : public juce::Component, public MixAnalysisService::Liste
 
     static constexpr int RAIL_WIDTH = 36;
 
+    void syncFromConfig();
+
     // Fired after a toggle is flipped and Config has been updated.
     std::function<void()> onToggleChanged;
 

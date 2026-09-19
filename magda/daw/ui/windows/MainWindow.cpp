@@ -1,5 +1,6 @@
 #include "MainWindow.hpp"
 #include "sunroom/SunroomStudio.hpp"
+#include "ui/panels/content/MediaExplorerContent.hpp"
 
 #include <vector>
 
@@ -1317,7 +1318,10 @@ void MainWindow::MainComponent::setupDeviceLoadingCallback() {
     };
     sunroom_->onEditClip = [this](TrackId /*trackId*/, ClipId clipId) {
         guidedStudio_ = false;
-        ViewModeController::getInstance().setViewMode(ViewMode::Live);
+        const auto* clip = ClipManager::getInstance().getClip(clipId);
+        ViewModeController::getInstance().setViewMode(
+            clip != nullptr && clip->view == ClipView::Session ? ViewMode::Live
+                                                               : ViewMode::Arrange);
         SelectionManager::getInstance().selectClip(clipId);
         ClipManager::getInstance().setSelectedClip(clipId);
         if (bottomPanelCollapsed && bottomPanel) {
@@ -1352,8 +1356,9 @@ void MainWindow::MainComponent::setupDeviceLoadingCallback() {
     };
     sunroom_->onShowMix = [this] {
         guidedStudio_ = false;
-        // Guided entry leaves advanced mixer rows collapsed unless the user already
-        // expanded them this session; do not overwrite their Config preferences.
+        // Guided entry hides optional rows for this session. Stored preferences stay.
+        if (mixerView)
+            mixerView->applyGuidedPresentation();
         ViewModeController::getInstance().setViewMode(ViewMode::Mix);
         resized();
         repaint();
@@ -1362,6 +1367,13 @@ void MainWindow::MainComponent::setupDeviceLoadingCallback() {
     sunroom_->onOpenProject = [this] { commandManager.invokeDirectly(CommandIDs::openProject, true); };
     sunroom_->onSave = [this] { commandManager.invokeDirectly(CommandIDs::saveProject, true); };
     sunroom_->onExport = [this] { commandManager.invokeDirectly(CommandIDs::exportAudio, true); };
+    sunroom_->onPreviewSample = [this](const juce::File& file) {
+        if (leftPanel == nullptr)
+            return false;
+        auto* content = leftPanel->ensureContent(daw::ui::PanelContentType::MediaExplorer);
+        auto* explorer = dynamic_cast<daw::ui::MediaExplorerContent*>(content);
+        return explorer != nullptr && explorer->previewFile(file);
+    };
     guidedStudioButton_.onClick = [this] { guidedStudio_ = true; resized(); repaint(); };
     guidedStudioButton_.setButtonText("Guided studio");
     guidedStudioButton_.setTooltip("Reopen the beginner Create guide");
@@ -1826,18 +1838,7 @@ void MainWindow::MainComponent::globalFocusChanged(juce::Component* focusedCompo
     if (kb == nullptr || !kb->isEnabled())
         return;
 
-    const bool typing =
-        focusedComponent != nullptr &&
-        (dynamic_cast<juce::TextEditor*>(focusedComponent) != nullptr ||
-         focusedComponent->findParentComponentOfClass<juce::TextEditor>() != nullptr ||
-         (dynamic_cast<juce::Label*>(focusedComponent) != nullptr &&
-          dynamic_cast<juce::Label*>(focusedComponent)->isEditable()));
-    auto* top = getTopLevelComponent();
-    const bool leftWindow =
-        focusedComponent == nullptr ||
-        (top != nullptr && focusedComponent != top && !top->isParentOf(focusedComponent));
-
-    if (typing || leftWindow)
+    if (keyboardPlayReleasesHeldNotes(focusedComponent, getTopLevelComponent()))
         kb->flushHeldNotes();
 }
 

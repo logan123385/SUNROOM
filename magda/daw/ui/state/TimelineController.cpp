@@ -6,11 +6,61 @@
 #include "../../core/GridDivision.hpp"
 #include "../../core/TempoUtils.hpp"
 #include "../../core/TrackManager.hpp"
+#include "../../core/UndoManager.hpp"
 #include "../../project/ProjectManager.hpp"
 #include "../utils/TimelineUtils.hpp"
 #include "Config.hpp"
 
 namespace magda {
+
+namespace {
+
+class SetTimelineProjectTempoCommand final : public UndoableCommand {
+  public:
+    SetTimelineProjectTempoCommand(double before, double after) : before_(before), after_(after) {}
+
+    void execute() override {
+        ProjectManager::getInstance().setTempo(after_);
+    }
+    void undo() override {
+        ProjectManager::getInstance().setTempo(before_);
+    }
+    juce::String getDescription() const override {
+        return "Set project tempo";
+    }
+
+  private:
+    double before_;
+    double after_;
+};
+
+class SetTimelineProjectTimeSignatureCommand final : public UndoableCommand {
+  public:
+    SetTimelineProjectTimeSignatureCommand(int beforeNumerator, int beforeDenominator,
+                                           int afterNumerator, int afterDenominator)
+        : beforeNumerator_(beforeNumerator),
+          beforeDenominator_(beforeDenominator),
+          afterNumerator_(afterNumerator),
+          afterDenominator_(afterDenominator) {}
+
+    void execute() override {
+        ProjectManager::getInstance().setTimeSignature(afterNumerator_, afterDenominator_);
+    }
+    void undo() override {
+        ProjectManager::getInstance().setTimeSignature(beforeNumerator_, beforeDenominator_);
+    }
+    juce::String getDescription() const override {
+        return "Set time signature";
+    }
+
+  private:
+    int beforeNumerator_;
+    int beforeDenominator_;
+    int afterNumerator_;
+    int afterDenominator_;
+};
+
+}  // namespace
 
 TimelineController::TimelineController() {
     // Set as current instance for global access
@@ -754,8 +804,11 @@ TimelineController::ChangeFlags TimelineController::handleEvent(const SetTempoEv
     state.tempo.bpm = newBpm;
     state.timelineLength = magda::TimelineUtils::beatsToSeconds(state.timelineLengthBeats, newBpm);
 
-    // Keep ProjectManager in sync for serialization
-    ProjectManager::getInstance().setTempo(newBpm);
+    // Keep ProjectManager in sync for serialization. Timeline math stays here;
+    // only the stored tempo is undoable.
+    const auto before = ProjectManager::getInstance().getCurrentProjectInfo().tempo;
+    UndoManager::getInstance().executeCommand(
+        std::make_unique<SetTimelineProjectTempoCommand>(before, newBpm));
 
     // Update all beat-anchored positions to maintain bar/beat positions
     uint32_t extraFlags = 0;
@@ -930,7 +983,9 @@ TimelineController::ChangeFlags TimelineController::handleEvent(const SetTimeSig
     state.tempo.timeSignatureNumerator = num;
     state.tempo.timeSignatureDenominator = den;
 
-    ProjectManager::getInstance().setTimeSignature(num, den);
+    const auto& before = ProjectManager::getInstance().getCurrentProjectInfo();
+    UndoManager::getInstance().executeCommand(std::make_unique<SetTimelineProjectTimeSignatureCommand>(
+        before.timeSignatureNumerator, before.timeSignatureDenominator, num, den));
 
     // Notify audio engine of time signature change
     for (auto* listener : audioEngineListeners) {

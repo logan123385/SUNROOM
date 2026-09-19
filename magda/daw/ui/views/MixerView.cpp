@@ -2560,6 +2560,14 @@ void MixerView::updateStripWidths() {
     }
 }
 
+void MixerView::applyGuidedPresentation() {
+    Config::getInstance().beginGuidedMixerPresentation();
+    if (toggleRail_)
+        toggleRail_->syncFromConfig();
+    resized();
+    relayoutAllStrips();
+}
+
 void MixerView::reconcileAnalysisDevices() {
     auto& tm = TrackManager::getInstance();
     const auto& cfg = Config::getInstance();

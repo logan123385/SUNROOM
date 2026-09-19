@@ -4,6 +4,7 @@
 
 #include <array>
 #include <unordered_set>
+#include <vector>
 
 namespace magda {
 
@@ -74,5 +75,36 @@ class QwertyMidiKeyboard : public juce::KeyListener {
     int velocity_ = 100;
     std::unordered_set<int> heldNotes_;
 };
+
+/** True when computer-keyboard play must not turn this key into a note. */
+inline bool keyboardPlayYieldsToTyping(juce::Component* focused) {
+    if (focused == nullptr)
+        return false;
+    if (dynamic_cast<juce::TextEditor*>(focused) != nullptr)
+        return true;
+    if (focused->findParentComponentOfClass<juce::TextEditor>() != nullptr)
+        return true;
+    if (auto* label = dynamic_cast<juce::Label*>(focused))
+        return label->isEditable();
+    return false;
+}
+
+/** True when a focus change should release notes still held by computer-keyboard play. */
+inline bool keyboardPlayReleasesHeldNotes(juce::Component* focused, juce::Component* windowTop) {
+    if (keyboardPlayYieldsToTyping(focused))
+        return true;
+    if (focused == nullptr)
+        return true;
+    if (windowTop == nullptr)
+        return false;
+    return focused != windowTop && !windowTop->isParentOf(focused);
+}
+
+/** Move held notes out of the set. The caller sends note-offs for the returned pitches. */
+inline std::vector<int> takeHeldKeyboardNotes(std::unordered_set<int>& held) {
+    std::vector<int> notes(held.begin(), held.end());
+    held.clear();
+    return notes;
+}
 
 }  // namespace magda

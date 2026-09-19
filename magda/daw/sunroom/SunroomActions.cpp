@@ -1,6 +1,7 @@
 #include "SunroomActions.hpp"
 
 #include <array>
+#include <cstdlib>
 #include <memory>
 
 #include "audio/AudioBridge.hpp"
@@ -11,6 +12,7 @@
 #include "core/ChainNodePath.hpp"
 #include "core/ClipManager.hpp"
 #include "core/ClipTypes.hpp"
+#include "core/DeviceState.hpp"
 #include "core/RackInfo.hpp"
 #include "core/SelectionManager.hpp"
 #include "core/TrackCommands.hpp"
@@ -20,7 +22,9 @@
 #include "engine/AudioEngine.hpp"
 #include "project/ProjectManager.hpp"
 #include "ui/state/TimelineController.hpp"
+#include "../../agents/automation_executor.hpp"
 #include "../../agents/dsl_interpreter.hpp"
+#include "../../agents/instruction_executor.hpp"
 #include "api/magda_api.hpp"
 
 #include <juce_audio_formats/juce_audio_formats.h>
@@ -385,7 +389,7 @@ void CreateFixtureACommand::execute() {
     after_.loopEnabled = true;
     after_.loopStartBeats = 0.0;
     after_.loopEndBeats = kFixtureBeats;
-    after_.markers = {{1, 0.0, "Fixture A", static_cast<juce::uint32>(0xff6b8cae)}};
+    after_.markers = {{1, 0.0, "Loop", static_cast<juce::uint32>(0xff6b8cae)}};
     applyProject(after_);
 
     // Harmonic guide only — sounding chords live on the Chords instrument track.
@@ -396,6 +400,14 @@ void CreateFixtureACommand::execute() {
 
     const auto drumsId = tm.createTrack("Drums", TrackType::Audio);
     ids_.push_back(drumsId);
+    if (const char* inject = std::getenv("MAGDA_SUNROOM_INJECT_FAIL")) {
+        if (juce::String(inject) == "fixture-a-after-first-track") {
+            failureReason_ = "Injected failure after the first track";
+            failed_ = true;
+            rollbackPartial();
+            return;
+        }
+    }
     const auto drumDevice =
         tm.addDeviceToTrack(drumsId, makeDevice("drumgrid", "Drum Grid", true));
     if (drumDevice == INVALID_DEVICE_ID) {
@@ -479,6 +491,18 @@ void CreateFixtureACommand::execute() {
 
     const auto chordsId = tm.createTrack("Chords", TrackType::Audio);
     ids_.push_back(chordsId);
+    // Same Chord Engine the chord track already ships with. It does not make
+    // sound; the polysynth after it does. MIDI passes through unchanged.
+    DeviceInfo chordEngine;
+    chordEngine.name = "Chord Engine";
+    chordEngine.manufacturer = "MAGDA";
+    chordEngine.pluginId = "midichordengine";
+    chordEngine.uniqueId = "midichordengine";
+    chordEngine.fileOrIdentifier = "midichordengine";
+    chordEngine.isInstrument = false;
+    chordEngine.deviceType = DeviceType::MIDI;
+    chordEngine.format = PluginFormat::Internal;
+    tm.addDeviceToTrack(chordsId, chordEngine);
     tm.addDeviceToTrack(chordsId, makeDevice("magda_polysynth", "Chords", true,
                                              {{0, 2},
                                               {1, -8},
@@ -504,13 +528,35 @@ void CreateFixtureACommand::execute() {
     if (const auto* t = tm.getTrack(chordsId))
         tracks_.push_back(*t);
 
+    const auto sample = resolveStarterFile("Glass mote 01.wav");
+    const auto soundId = tm.createTrack("Sound", TrackType::Audio);
+    ids_.push_back(soundId);
+    auto sampler = makeDevice("magdasampler", "Sampler", true, {});
+    if (sample.existsAsFile()) {
+        magda::device_state::Doc doc;
+        doc.deviceType = "magdasampler";
+        doc.root.props.set("source", sample.getFullPathName());
+        doc.root.props.set("rootNote", 62);
+        sampler.pluginState = magda::device_state::encode(doc);
+    }
+    tm.addDeviceToTrack(soundId, sampler);
+    tm.setTrackVolume(soundId, 0.4f);
+    const auto soundClip = cm.createMidiClipBeats(soundId, 0.0, kFixtureBeats);
+    cm.setClipName(soundClip, "Sound");
+    cm.setClipColour(soundClip, juce::Colour(0xff6a7a8a));
+    addFixtureNote(cm, soundClip, 62, 0.0, 4.0, 90);
+    if (const auto* c = cm.getClip(soundClip))
+        clips_.push_back(*c);
+
     tracks_.clear();
     for (auto id : ids_) {
         if (const auto* t = tm.getTrack(id))
             tracks_.push_back(*t);
     }
 
-    summary_ = "Added drums, bass and chords in A minor at 100 BPM";
+    summary_ = "Added drums, bass and chords in A minor at 100 BPM. "
+               "Fixed starter: feeling, home note, and pace were not applied. "
+               "These clips are Arrangement, not Session.";
     if (engine_)
         engine_->locate(0);
     captured_ = true;
@@ -762,7 +808,7 @@ void CreateFixtureBCommand::execute() {
         remember(chordArr);
     }
 
-    summary_ = "Fixture B: Intro / Main / Variation / Ending (32 bars) with session scenes.";
+    summary_ = "Intro, Main, Variation, and Ending (32 bars), with Session scenes and Arrangement clips.";
     if (engine_)
         engine_->locate(0);
     captured_ = true;
@@ -1203,7 +1249,24 @@ StagedDslProposal& pendingSlot() {
     return slot;
 }
 
-StagedDslProposal captureDslProposal(const juce::String& dsl, const juce::String& explanation) {
+void nameGeneratedClip(ClipId clipId, const juce::String& description) {
+    if (clipId < 0 || description.isEmpty())
+        return;
+    constexpr int kMaxClipNameLen = 40;
+    juce::String clipName(description);
+    const auto clausePos = clipName.indexOfAnyOf(".,;");
+    if (clausePos > 0 && clausePos < kMaxClipNameLen)
+        clipName = clipName.substring(0, clausePos);
+    if (clipName.length() > kMaxClipNameLen)
+        clipName = clipName.substring(0, kMaxClipNameLen).trim() + juce::String::fromUTF8("…");
+    ClipManager::getInstance().setClipName(clipId, clipName.trim());
+}
+
+StagedDslProposal captureDslProposal(const juce::String& dsl, const juce::String& explanation,
+                                     const std::vector<Instruction>& music,
+                                     const juce::String& musicDescription, ClipId musicSeedClip,
+                                     bool replaceMusicSeed,
+                                     const std::vector<AutoInstruction>& automation) {
     static std::uint64_t nextId = 1;
     StagedDslProposal proposal;
     proposal.id = nextId++;
@@ -1213,6 +1276,11 @@ StagedDslProposal captureDslProposal(const juce::String& dsl, const juce::String
     proposal.selectedClip = SelectionManager::getInstance().getSelectedClip();
     proposal.dsl = dsl;
     proposal.explanation = explanation;
+    proposal.musicInstructions = music;
+    proposal.musicDescription = musicDescription;
+    proposal.musicSeedClip = musicSeedClip;
+    proposal.replaceMusicSeed = replaceMusicSeed;
+    proposal.automationInstructions = automation;
     proposal.phase = ProposalPhase::Ready;
     pendingSlot() = proposal;
     return proposal;
@@ -1236,6 +1304,14 @@ const StagedDslProposal* pendingDslProposal() {
     if (pendingSlot().id == 0)
         return nullptr;
     return &pendingSlot();
+}
+
+juce::String executeManualDsl(MagdaApi& api, const juce::String& dsl) {
+    dsl::Interpreter interpreter(api);
+    if (!interpreter.execute(dsl.toRawUTF8()))
+        return "Error: " + juce::String(interpreter.getError());
+    const auto results = interpreter.getResults();
+    return results.isEmpty() ? juce::String("OK") : results;
 }
 
 juce::String applyPendingDslProposal(MagdaApi& api, bool cancelled) {
@@ -1267,18 +1343,63 @@ juce::String applyPendingDslProposal(MagdaApi& api, bool cancelled) {
         return "Refused: selection changed; proposal was not retargeted";
     }
 
+    if (proposal.dsl.isEmpty() && proposal.musicInstructions.empty() &&
+        proposal.automationInstructions.empty()) {
+        proposal.phase = ProposalPhase::Failed;
+        return "Refused: proposal has no action";
+    }
+
     proposal.phase = ProposalPhase::Applying;
     dsl::Interpreter interpreter(api);
-    bool ok = false;
+    bool ok = true;
     juce::String results;
     juce::String error;
+    int musicClipId = -1;
     auto& undo = UndoManager::getInstance();
     const auto depthBefore = undo.undoDepth();
     {
         CompoundOperationScope scope("Apply suggestion");
-        ok = interpreter.execute(proposal.dsl.toRawUTF8());
-        results = interpreter.getResults();
-        error = interpreter.getError();
+        if (proposal.dsl.isNotEmpty()) {
+            ok = interpreter.execute(proposal.dsl.toRawUTF8());
+            results = interpreter.getResults();
+            error = interpreter.getError();
+        }
+        if (ok && !proposal.musicInstructions.empty()) {
+            InstructionExecutor executor(api);
+            int seed = static_cast<int>(proposal.musicSeedClip);
+            if (seed < 0 && proposal.dsl.isNotEmpty())
+                seed = interpreter.getCurrentClipId();
+            executor.setSeedClipId(seed);
+            executor.setReplaceSeedClipContents(proposal.replaceMusicSeed);
+            if (!executor.execute(proposal.musicInstructions)) {
+                ok = false;
+                error = executor.getError();
+            } else {
+                musicClipId = executor.getCurrentClipId();
+                const auto musicResults = executor.getResults();
+                if (musicResults.isNotEmpty()) {
+                    if (results.isNotEmpty())
+                        results += "\n";
+                    results += musicResults;
+                }
+            }
+            if (ok && !proposal.replaceMusicSeed)
+                nameGeneratedClip(musicClipId, proposal.musicDescription);
+        }
+        if (ok && !proposal.automationInstructions.empty()) {
+            AutomationExecutor executor(api);
+            if (!executor.execute(proposal.automationInstructions)) {
+                ok = false;
+                error = executor.getError();
+            } else {
+                const auto automationResults = executor.getResults();
+                if (automationResults.isNotEmpty()) {
+                    if (results.isNotEmpty())
+                        results += "\n";
+                    results += automationResults;
+                }
+            }
+        }
     }
     const bool pushed = undo.undoDepth() == depthBefore + 1 && undo.canUndo() &&
                         undo.getUndoDescription() == "Apply suggestion";
@@ -1398,6 +1519,13 @@ juce::File resolveStarterFile(const juce::String& fileName) {
     if (!file.existsAsFile() || file.getParentDirectory() != root)
         return {};
     return file;
+}
+
+juce::String describeStarterPreview(const juce::String& fileName) {
+    const auto file = resolveStarterFile(fileName);
+    if (!file.existsAsFile())
+        return {};
+    return "Preview only: " + file.getFileNameWithoutExtension() + ". Not added to the song.";
 }
 
 ImportStarterSampleCommand::ImportStarterSampleCommand(juce::String fileName)

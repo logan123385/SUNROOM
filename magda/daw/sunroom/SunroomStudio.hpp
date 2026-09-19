@@ -35,6 +35,7 @@ class SunroomStudio final : public juce::Component,
     std::function<void()> onReturnToArrangement;
     std::function<void(TrackId, ClipId)> onEditClip;
     std::function<void()> onEnableQwerty;
+    std::function<bool(const juce::File&)> onPreviewSample;
 
   private:
     AudioEngine* engine_;
@@ -50,7 +51,8 @@ class SunroomStudio final : public juce::Component,
     TrackId previewTrack_ = INVALID_TRACK_ID;
     std::vector<int> sounding_;
     double noteOffTime_ = 0;
-    juce::String status_ = "Choose Beat, Song, or Blank — then Create and Play.";
+    juce::String status_ =
+        "Create and Play writes a fixed A-minor loop at 100 BPM. Feeling, home note, and pace are for the journey.";
     juce::String pairText_ =
         "Click a note to hear it. Shift-click another to hear the relationship.";
     juce::String lastSummary_;

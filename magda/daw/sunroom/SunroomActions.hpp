@@ -5,6 +5,8 @@
 #include "core/TrackInfo.hpp"
 #include "core/UndoManager.hpp"
 #include "project/ProjectInfo.hpp"
+#include "../../agents/automation_parser.hpp"
+#include "../../agents/compact_parser.hpp"
 
 #include <optional>
 #include <vector>
@@ -13,6 +15,54 @@ namespace magda {
 class AudioEngine;
 class MagdaApi;
 namespace sunroom {
+
+/** Beginner Place Scene default: first session slot, never earlier than beat 128,
+ *  and not before the loop ends. Not a scene picker. */
+inline int beginnerPlaceSceneIndex() {
+    return 0;
+}
+inline double beginnerPlaceSceneBeat(double loopEndBeats) {
+    return juce::jmax(128.0, loopEndBeats);
+}
+
+/** Aux, Group, Master, and Chord tracks do not claim a Session or Arrangement
+ *  performance. An empty project must not say every track is Arrangement. */
+inline bool claimsPlaybackSource(TrackType type) {
+    switch (type) {
+        case TrackType::Audio:
+        case TrackType::MultiOut:
+            return true;
+        case TrackType::Group:
+        case TrackType::Aux:
+        case TrackType::Master:
+        case TrackType::Chord:
+            return false;
+    }
+    return false;
+}
+
+inline juce::String playbackSourceSummaryFor(const std::vector<TrackInfo>& tracks) {
+    int session = 0;
+    int arrangement = 0;
+    for (const auto& track : tracks) {
+        if (!claimsPlaybackSource(track.type))
+            continue;
+        if (track.playbackMode == TrackPlaybackMode::Session)
+            ++session;
+        else
+            ++arrangement;
+    }
+    if (session == 0 && arrangement == 0)
+        return "Playback source: none. No playable tracks yet.";
+    if (session == 0)
+        return "Playback source: Arrangement (all playable tracks).";
+    if (arrangement == 0)
+        return "Playback source: Session (all playable tracks). Return to Arrangement when ready.";
+    return "Playback source: mixed - " + juce::String(session) + " Session, " +
+           juce::String(arrangement) +
+           " Arrangement. Return to Arrangement clears Session overrides.";
+}
+
 DeviceInfo makeDevice(const juce::String& id, const juce::String& name, bool instrument,
                       const std::vector<std::pair<int, float>>& params = {});
 class CreateJourneyCommand final : public UndoableCommand {
@@ -54,7 +104,7 @@ class CreateFixtureACommand final : public UndoableCommand {
     const juce::String& summary() const {
         return summary_;
     }
-    bool failed() const {
+    bool failed() const override {
         return failed_;
     }
     const juce::String& failureReason() const {
@@ -92,7 +142,7 @@ class CreateFixtureBCommand final : public UndoableCommand {
     const juce::String& summary() const {
         return summary_;
     }
-    bool failed() const {
+    bool failed() const override {
         return failed_;
     }
     const juce::String& failureReason() const {
@@ -128,7 +178,7 @@ class PlaceSceneInArrangementCommand final : public UndoableCommand {
     const juce::String& summary() const {
         return summary_;
     }
-    bool failed() const {
+    bool failed() const override {
         return failed_;
     }
     const juce::String& failureReason() const {
@@ -160,7 +210,7 @@ class CreateFixtureCCommand final : public UndoableCommand {
     const juce::String& summary() const {
         return summary_;
     }
-    bool failed() const {
+    bool failed() const override {
         return failed_;
     }
     const juce::String& failureReason() const {
@@ -197,7 +247,7 @@ class ApplySharedSpatialReturnCommand final : public UndoableCommand {
     const juce::String& summary() const {
         return summary_;
     }
-    bool failed() const {
+    bool failed() const override {
         return failed_;
     }
     const juce::String& failureReason() const {
@@ -270,6 +320,9 @@ juce::String formatStarterQuery(const StarterQueryReport& report);
 /** File must be a direct child of the starter folder. Missing files are empty. */
 juce::File resolveStarterFile(const juce::String& fileName);
 
+/** Resolve a starter WAV for preview. Empty if it cannot be used. Does not import. */
+juce::String describeStarterPreview(const juce::String& fileName);
+
 /**
  * Import one starter WAV as a normal audio clip. Undo removes the track and
  * clip only. The source WAV is never deleted.
@@ -282,7 +335,7 @@ class ImportStarterSampleCommand final : public UndoableCommand {
     juce::String getDescription() const override {
         return "Add starter sound";
     }
-    bool failed() const {
+    bool failed() const override {
         return failed_;
     }
     const juce::String& failureReason() const {
@@ -303,9 +356,9 @@ class ImportStarterSampleCommand final : public UndoableCommand {
 };
 
 /**
- * Staged DSL proposal. Capture does not mutate. Apply re-checks project path,
- * mutation revision and selection, then runs dsl::Interpreter inside one undo
- * compound. Model text is not a permission grant.
+ * Staged agent proposal. Capture does not mutate. Apply re-checks project path,
+ * mutation revision and selection, then runs DSL, music IR, and automation IR
+ * inside one undo compound. Model text is not a permission grant.
  */
 enum class ProposalPhase { Ready, Applying, Applied, Rejected, Canceled, Failed, Stale };
 
@@ -317,12 +370,24 @@ struct StagedDslProposal {
     ClipId selectedClip = INVALID_CLIP_ID;
     juce::String dsl;
     juce::String explanation;
+    std::vector<Instruction> musicInstructions;
+    juce::String musicDescription;
+    ClipId musicSeedClip = INVALID_CLIP_ID;
+    bool replaceMusicSeed = false;
+    std::vector<AutoInstruction> automationInstructions;
     ProposalPhase phase = ProposalPhase::Ready;
 };
 
-StagedDslProposal captureDslProposal(const juce::String& dsl, const juce::String& explanation);
+StagedDslProposal captureDslProposal(const juce::String& dsl, const juce::String& explanation,
+                                     const std::vector<Instruction>& music = {},
+                                     const juce::String& musicDescription = {},
+                                     ClipId musicSeedClip = INVALID_CLIP_ID,
+                                     bool replaceMusicSeed = false,
+                                     const std::vector<AutoInstruction>& automation = {});
 juce::String applyPendingDslProposal(MagdaApi& api, bool cancelled);
 const StagedDslProposal* pendingDslProposal();
+/// Console `/dsl` and the DSL panel: run now. Does not stage a proposal.
+juce::String executeManualDsl(MagdaApi& api, const juce::String& dsl);
 /** One statement after SUNROOM_DSL:. Empty if the coach text has no staged action. */
 juce::String extractCoachDsl(const juce::String& text);
 

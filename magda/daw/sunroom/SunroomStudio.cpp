@@ -222,21 +222,29 @@ SunroomStudio::SunroomStudio(AudioEngine* engine) : engine_(engine) {
     create_.setName("primary");
     play_.setName("primary");
     ask_.setName("primary");
-    create_.setTooltip("Create editable drums, bass and chords, then play. Cmd-Z undoes the whole "
-                       "addition. Rapid clicks will not double-insert.");
-    journey_.setTooltip("Optional SUNROOM mood journey using the feeling controls below.");
+    create_.setTooltip(
+        "Fixed 8-bar Arrangement loop: A natural minor, 100 BPM, 4/4. Not a Session scene. "
+        "Does not use feeling, home note, or pace. Cmd-Z undoes the whole addition.");
+    journey_.setTooltip(
+        "Uses the feeling, home note, pace, length, and atmosphere controls. Create and Play does "
+        "not.");
     skipGuide_.setTooltip("Skip the guided studio and open Full studio.");
-    makeBeat_.setTooltip("Open the Drum Grid clip so you can change a step.");
-    addChords_.setTooltip("Open the Chords clip in the note editor.");
-    playSound_.setTooltip("Open the Bass clip and turn on computer keyboard play.");
+    makeBeat_.setTooltip(
+        "Selects the Drums clip. Drum Grid opens because the drumgrid plugin prefers that editor.");
+    addChords_.setTooltip(
+        "Selects the Chords clip. Chord Engine is on that track, in front of the polysynth that "
+        "makes the sound.");
+    playSound_.setTooltip(
+        "Selects the Sound clip and turns on computer keyboard play. A Sampler is loaded with "
+        "Glass mote 01. The Bass polysynth stays on the Bass track.");
     captureJam_.setTooltip(
         "Arm real Session→Arrangement capture (transport Record). Launch clips while armed; stop "
         "recording to commit timed performance. Not a static scene copy.");
     placeScene_.setTooltip(
-        "Deterministically place the first scene's Session clips into an empty arrangement range "
-        "(after the loop). Distinct from Capture Jam.");
+        "Copies the first scene to beat 128, or later if the loop is longer. Not Capture Jam.");
     returnArrange_.setTooltip(
-        "Return tracks from Session override to Arrangement playback at the engine boundary.");
+        "Stops session clips and returns those tracks to Arrangement playback. Does not change "
+        "the view.");
     openMix_.setTooltip(
         "Open the real Mixer (faders, pan, mute, solo, meters). Analyze stays on the mixer rail. "
         "Advanced sends/spectrum stay collapsed unless you expand them.");
@@ -250,7 +258,7 @@ SunroomStudio::SunroomStudio(AudioEngine* engine) : engine_(engine) {
         openFixtureClip("Chords", "Fixture A / Chords", false);
     };
     playSound_.onClick = [this] {
-        openFixtureClip("Bass", "Fixture A / Bass", true);
+        openFixtureClip("Sound", "Sound", true);
     };
     captureJam_.onClick = [this] {
         stopNotes();
@@ -267,7 +275,8 @@ SunroomStudio::SunroomStudio(AudioEngine* engine) : engine_(engine) {
         stopNotes();
         if (onReturnToArrangement)
             onReturnToArrangement();
-        status_ = playbackSourceSummary();
+        status_ = "Return to Arrangement stops session clips. The view stays put. " +
+                  playbackSourceSummary();
         repaint();
     };
     openMix_.onClick = [this] {
@@ -291,6 +300,11 @@ SunroomStudio::SunroomStudio(AudioEngine* engine) : engine_(engine) {
         };
         addAndMakeVisible(starterButtons_[i]);
     }
+    starterButtons_[0].setTooltip(
+        "Eight-bar drums, bass, and chords on the Arrangement. Fixed A minor at 100 BPM.");
+    starterButtons_[1].setTooltip(
+        "The same loop, then Intro, Main, Variation, and Ending.");
+    starterButtons_[2].setTooltip("An empty project. Does not insert the starter loop.");
     starterButtons_[0].setToggleState(true, juce::dontSendNotification);
     for (int i = 0; i < 4; ++i) {
         tabs_[i].setButtonText(
@@ -803,10 +817,10 @@ void SunroomStudio::paintCreate(juce::Graphics& g) {
     card(g, left_);
     card(g, centre_);
     card(g, right_);
-    text(g, "01 / CHOOSE A FEELING", left_.withTrimmedLeft(15).withHeight(36), 11, muted, true);
+    text(g, "01 / FOR THE JOURNEY", left_.withTrimmedLeft(15).withHeight(36), 11, muted, true);
     text(g, "Home note", {left_.getX() + 15, left_.getY() + 269, 70, 32}, 12, muted);
-    text(g, "Pace / how fast time moves", {left_.getX() + 15, left_.getY() + 307, 190, 30}, 12,
-         muted);
+    text(g, "Pace — journey only, not Create and Play",
+         {left_.getX() + 15, left_.getY() + 307, 220, 30}, 12, muted);
     text(g, "02 / YOUR LITTLE UNIVERSE",
          {centre_.getX() + 15, centre_.getY() + 9, centre_.getWidth() - 30, 28}, 11, muted, true);
     if (!previewValid_ || !(previewOptions_ == options_)) {
@@ -862,7 +876,7 @@ void SunroomStudio::paintCreate(juce::Graphics& g) {
         // First-song path stays visible until something is built.
         const int y = getHeight() - 72;
         text(g, "FIRST SONG", {30, y, 90, 22}, 10, orange, true);
-        text(g, "Beat or Song  →  Create and Play  →  edit a drum step in Session",
+        text(g, "Beat or Song is a fixed A-minor loop at 100 BPM. Feeling controls feed the journey.",
              {120, y, getWidth() - 160, 22}, 12, paper);
     }
     if (lastSummary_.isNotEmpty())
@@ -967,8 +981,8 @@ void SunroomStudio::paintSounds(juce::Graphics& g) {
         sampleHitboxes_.push_back({hit, samples_[i + sampleOffset_]});
     }
     text(g,
-         "Click a WAV to add it at the playhead. Scroll the list for more sounds.\nMore built-in "
-         "effects live in Full studio's plugin browser.",
+         "Click a WAV to hear it in the sample browser. Shift-click adds it at the playhead.\n"
+         "Nothing is added until you shift-click.",
          {36, getHeight() - 75, libraryX - 60, 43}, 12, muted);
 }
 void SunroomStudio::paintCoach(juce::Graphics& g) {
@@ -1030,18 +1044,32 @@ void SunroomStudio::mouseDown(const juce::MouseEvent& event) {
         }
         for (auto& hit : sampleHitboxes_)
             if (hit.first.contains(p)) {
-                juce::AudioFormatManager formats;
-                formats.registerBasicFormats();
-                std::unique_ptr<juce::AudioFormatReader> reader(
-                    formats.createReaderFor(hit.second));
-                if (reader) {
-                    UndoManager::getInstance().executeCommand(std::make_unique<AddSampleCommand>(
-                        hit.second, reader->lengthInSamples / reader->sampleRate,
-                        engine_ ? engine_->getCurrentPosition() : 0));
-                    status_ = "Added " + hit.second.getFileNameWithoutExtension() +
-                              " at the playhead. Cmd-Z undoes this.";
+                const auto note = describeStarterPreview(hit.second.getFileName());
+                if (note.isEmpty()) {
+                    status_ = "Starter sound was not found. Nothing was added.";
                     repaint();
+                    return;
                 }
+                if (event.mods.isShiftDown()) {
+                    juce::AudioFormatManager formats;
+                    formats.registerBasicFormats();
+                    std::unique_ptr<juce::AudioFormatReader> reader(
+                        formats.createReaderFor(hit.second));
+                    if (reader) {
+                        UndoManager::getInstance().executeCommand(std::make_unique<AddSampleCommand>(
+                            hit.second, reader->lengthInSamples / reader->sampleRate,
+                            engine_ ? engine_->getCurrentPosition() : 0));
+                        status_ = "Added " + hit.second.getFileNameWithoutExtension() +
+                                  " at the playhead. Cmd-Z undoes this.";
+                    } else {
+                        status_ = "Could not read the starter sound. Nothing was added.";
+                    }
+                } else {
+                    const bool started = onPreviewSample && onPreviewSample(hit.second);
+                    status_ = note + (started ? " The sample browser is playing it."
+                                              : " The sample browser player did not start.");
+                }
+                repaint();
                 return;
             }
     }
@@ -1177,7 +1205,15 @@ void SunroomStudio::openFixtureClip(const juce::String& trackName, const juce::S
         return;
     }
 
-    status_ = "Editing " + clipName + ". Full studio stays linked to the same clip data.";
+    if (trackName == "Drums")
+        status_ = "Editing the Drums loop in the Drum Grid editor. The clip is on the Arrangement, not in Session.";
+    else if (trackName == "Chords")
+        status_ = "Editing the Chords loop. Chord Engine is in front of the polysynth. The clip is on the Arrangement, not in Session.";
+    else if (trackName == "Sound")
+        status_ = "Playing the Sound clip from the computer keyboard. Sampler is loaded with Glass mote 01. Bass is still the polysynth.";
+    else
+        status_ = "Editing the " + trackName +
+                  " loop on the Arrangement. Create and Play did not put this clip in Session.";
     if (onEditClip)
         onEditClip(trackId, clipId);
     if (enableQwerty && onEnableQwerty)
@@ -1186,22 +1222,7 @@ void SunroomStudio::openFixtureClip(const juce::String& trackName, const juce::S
 }
 
 juce::String SunroomStudio::playbackSourceSummary() const {
-    int session = 0, arrangement = 0;
-    for (const auto& track : TrackManager::getInstance().getTracks()) {
-        if (track.type == TrackType::Chord)
-            continue;
-        if (track.playbackMode == TrackPlaybackMode::Session)
-            ++session;
-        else
-            ++arrangement;
-    }
-    if (session == 0)
-        return "Playback source: Arrangement (all tracks).";
-    if (arrangement == 0)
-        return "Playback source: Session (all tracks). Return to Arrangement when ready.";
-    return "Playback source: mixed — " + juce::String(session) + " Session, " +
-           juce::String(arrangement) +
-           " Arrangement. Return to Arrangement clears Session overrides.";
+    return playbackSourceSummaryFor(TrackManager::getInstance().getTracks());
 }
 
 void SunroomStudio::expandToFixtureB() {
@@ -1236,13 +1257,22 @@ void SunroomStudio::expandToFixtureB() {
 void SunroomStudio::placeSceneInArrangement() {
     stopNotes();
     if (!hasFixtureATracks()) {
-        status_ = "Create a Song (or Fixture B) first so scenes exist.";
+        status_ = "Create a Song first so the section scenes exist.";
         repaint();
         return;
     }
-    const double dest =
-        juce::jmax(128.0, ProjectManager::getInstance().getCurrentProjectInfo().loopEndBeats);
-    auto command = std::make_unique<PlaceSceneInArrangementCommand>(0, dest);
+    const int scene = beginnerPlaceSceneIndex();
+    const double dest = beginnerPlaceSceneBeat(
+        ProjectManager::getInstance().getCurrentProjectInfo().loopEndBeats);
+    juce::String label = "scene " + juce::String(scene);
+    for (const auto& track : TrackManager::getInstance().getTracks()) {
+        const auto clipId = ClipManager::getInstance().getClipInSlot(track.id, scene);
+        if (const auto* clip = ClipManager::getInstance().getClip(clipId)) {
+            label = clip->name;
+            break;
+        }
+    }
+    auto command = std::make_unique<PlaceSceneInArrangementCommand>(scene, dest);
     auto* raw = command.get();
     UndoManager::getInstance().executeCommand(std::move(command));
     if (raw->failed()) {
@@ -1253,7 +1283,8 @@ void SunroomStudio::placeSceneInArrangement() {
         repaint();
         return;
     }
-    status_ = raw->summary();
+    status_ = "Copied " + label + " to beat " + juce::String(dest, 1) +
+              ". First scene, after the loop. Not Capture Jam.";
     if (onShowArrange)
         onShowArrange();
     repaint();
@@ -1335,7 +1366,7 @@ void SunroomStudio::setStarter(StarterKind kind) {
             status_ = "Beat: drums, bass and chords — eight bars at 100 BPM.";
             break;
         case StarterKind::Song:
-            status_ = "Song: Fixture A plus Intro/Main/Variation/Ending sections (Fixture B).";
+            status_ = "Song: the eight-bar loop, then Intro, Main, Variation, and Ending.";
             break;
         case StarterKind::Blank:
             status_ = "Blank: keep an empty project and open Full studio when ready.";
@@ -1391,18 +1422,18 @@ void SunroomStudio::createAndPlay() {
             repaint();
             return;
         }
-        lastSummary_ = raw->summary() + "  Next: open the Drums clip to change a step.";
+        lastSummary_ = raw->summary() + "  Next: open the Drums clip on the Arrangement.";
         status_ = lastSummary_;
     } else {
-        status_ = "Starter already in the project — playing it.";
+        status_ = "Starter already in the project. It plays from Arrangement clips, not a Session scene.";
     }
 
     if (starter_ == StarterKind::Song)
         expandToFixtureB();
 
-    ViewModeController::getInstance().setViewMode(ViewMode::Live);
-    if (onShowSession)
-        onShowSession();
+    ViewModeController::getInstance().setViewMode(ViewMode::Arrange);
+    if (onShowArrange)
+        onShowArrange();
 
     if (engine_) {
         engine_->locate(0);

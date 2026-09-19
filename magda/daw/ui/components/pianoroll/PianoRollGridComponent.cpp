@@ -1937,12 +1937,9 @@ PianoRollGridComponent::getNoteInsertPosition(juce::Point<int> localPos) const {
     insertPos.clipId = targetClipId;
     insertPos.beat = clipBeatForDisplayX(targetClipId, localPos.x);
     insertPos.noteNumber = yToNoteNumber(localPos.y);
-    if (scaleLockEnabled_) {
-        const auto* clip = ClipManager::getInstance().getClip(targetClipId);
-        const auto* track = clip != nullptr ? TrackManager::getInstance().getTrack(clip->trackId)
-                                            : nullptr;
-        bool drumGrid = false;
-        if (track != nullptr) {
+    bool drumGrid = false;
+    if (const auto* clip = ClipManager::getInstance().getClip(targetClipId)) {
+        if (const auto* track = TrackManager::getInstance().getTrack(clip->trackId)) {
             for (const auto& element : track->chain.fxChainElements) {
                 if (!isDevice(element))
                     continue;
@@ -1954,13 +1951,11 @@ PianoRollGridComponent::getNoteInsertPosition(juce::Point<int> localPos) const {
                 }
             }
         }
-        if (!drumGrid) {
-            const auto& guide = ProjectManager::getInstance().getCurrentProjectInfo();
-            if (guide.sunroomGuide && guide.keyRoot >= 0)
-                insertPos.noteNumber =
-                    sunroom::snapToScale(insertPos.noteNumber, guide.keyRoot, guide.sunroomMood);
-        }
     }
+    const auto& guide = ProjectManager::getInstance().getCurrentProjectInfo();
+    insertPos.noteNumber = sunroom::scaleLockedInsertNote(
+        insertPos.noteNumber, scaleLockEnabled_, guide.sunroomGuide, guide.keyRoot,
+        guide.sunroomMood, drumGrid);
     return insertPos;
 }
 

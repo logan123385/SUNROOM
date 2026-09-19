@@ -48,6 +48,13 @@ class MediaExplorerContent : public PanelContent,
      */
     void setAudioEngine(magda::AudioEngine* engine);
 
+    /**
+     * Play this file through the sample browser's existing preview.
+     * Uses the shared device manager. Does not import the file.
+     * Returns false when no device is connected or the file cannot be read.
+     */
+    bool previewFile(const juce::File& file);
+
     // FileBrowserListener
     void selectionChanged() override;
     void fileClicked(const juce::File& file, const juce::MouseEvent& e) override;

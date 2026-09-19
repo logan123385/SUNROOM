@@ -364,6 +364,9 @@ class ProjectManager : private juce::Timer {
     ~ProjectManager();
 
     void joinBackgroundThread();
+    /// Join the load worker, then bump the revision. Joining does not cancel a
+    /// commit already queued on the message thread.
+    void invalidatePendingProjectCommit();
     void timerCallback() override;
     void performAutosave();
     void deleteAutosaveFile();

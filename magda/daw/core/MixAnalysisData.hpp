@@ -69,4 +69,52 @@ struct MixAnalysisData {
     std::string genre;
 };
 
+inline std::string formatFixed(float value, int digits) {
+    const bool negative = value < 0.0f;
+    float magnitude = negative ? -value : value;
+    int scale = 1;
+    for (int i = 0; i < digits; ++i)
+        scale *= 10;
+    const int scaled = static_cast<int>(magnitude * static_cast<float>(scale) + 0.5f);
+    std::string text = std::to_string(scaled / scale);
+    if (digits > 0) {
+        text.push_back('.');
+        auto fraction = std::to_string(scaled % scale);
+        text.append(static_cast<size_t>(digits) - fraction.size(), '0');
+        text += fraction;
+    }
+    return negative ? "-" + text : text;
+}
+
+/** Measured levels and collisions only. No mix-health score. */
+inline std::string formatMixFindings(const MixAnalysisData& in) {
+    std::string out = "LEVELS (" + std::to_string(in.tracks.size()) + " tracks)\n";
+    out += "NAME            LUFS   PEAK\n";
+    auto line = [&](const std::string& name, const MixAnalysisData::Track& track) {
+        const auto shown = name.size() < 14 ? name : name.substr(0, 14);
+        out += shown;
+        if (shown.size() < 16)
+            out.append(16 - shown.size(), ' ');
+        out += formatFixed(track.integratedLufs, 1);
+        out += "  ";
+        out += formatFixed(track.samplePeakDb, 1);
+        out += "\n";
+    };
+    for (const auto& track : in.tracks)
+        line(track.name, track);
+    if (in.master)
+        line("[MASTER]", *in.master);
+    out += "\nCOLLISIONS (" + std::to_string(in.masking.size()) + ")\n";
+    if (in.masking.empty()) {
+        out += "  none detected\n";
+    } else {
+        for (const auto& pair : in.masking) {
+            out += "  " + pair.a + " vs " + pair.b + " ";
+            out += formatFixed(pair.loHz, 0) + "-" + formatFixed(pair.hiHz, 0);
+            out += " Hz " + formatFixed(pair.severity, 2) + "\n";
+        }
+    }
+    return out;
+}
+
 }  // namespace magda

@@ -14,6 +14,14 @@
 
 namespace magda {
 
+/** Capture writes the clip's launch time when one was recorded.
+ *  Otherwise it uses the transport position. Place Scene does not use this. */
+inline double captureArrangementStartSeconds(double transportSeconds, double launchSeconds) {
+    if (launchSeconds > 0.0)
+        return launchSeconds;
+    return transportSeconds;
+}
+
 namespace te = tracktion;
 
 /**

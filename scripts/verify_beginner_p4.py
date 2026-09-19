@@ -70,6 +70,38 @@ def dump_project(name: str, project: pathlib.Path) -> dict:
     raise AssertionError(f"{name}: missing dump-json")
 
 
+focus = call("00b-keyboard-focus", "keyboard-play-focus")
+for line in (
+    "none yield-no",
+    "text-editor yield",
+    "child-of-text-editor yield",
+    "editable-label yield",
+    "fixed-label yield-no",
+    "plain yield-no",
+):
+    assert line in focus, focus
+
+lock = call("00c-scale-lock-insert", "scale-lock-insert")
+for line in (
+    "pitched 10 -> 11",
+    "drum-grid 10 -> 10",
+    "lock-off 10 -> 10",
+    "no-guide 10 -> 10",
+):
+    assert line in lock, lock
+drum_grid = (ROOT / "magda/daw/ui/panels/content/DrumGridClipContent.cpp").read_text()
+assert "snapToScale" not in drum_grid
+
+release = call("00d-note-release", "keyboard-note-release")
+for line in (
+    "typing release held 0",
+    "inside keep held 2",
+    "outside release held 0",
+    "none release held 0",
+    "no-window keep held 2",
+):
+    assert line in release, release
+
 assert theory.is_file(), f"missing theory_test binary: {theory}"
 call("00-scale-lock-theory", binary=theory)
 
@@ -97,6 +129,31 @@ info_root = doc.get("keyRoot")
 info_quality = doc.get("keyQuality")
 assert info_root == 9, f"expected A (9), got {info_root}"
 assert info_quality in ("minor", 1), f"expected minor, got {info_quality}"
+assert tracks["Drums"]["devices"][0]["pluginId"] == "drumgrid"
+chord_ids = [d.get("pluginId") for d in tracks["Chords"]["devices"]]
+assert chord_ids[:2] == ["midichordengine", "magda_polysynth"], chord_ids
+bass_ids = [d.get("pluginId") for d in tracks["Bass"]["devices"]]
+assert "midichordengine" not in bass_ids
+assert bass_ids[0] == "magda_polysynth"
+assert "Sound" in tracks
+sound_ids = [d.get("pluginId") for d in tracks["Sound"]["devices"]]
+assert sound_ids == ["magdasampler"], sound_ids
+sound_state = tracks["Sound"]["devices"][0].get("pluginState") or ""
+assert "Glass mote 01.wav" in sound_state, sound_state[:400]
+
+editors = call(
+    "02c-editors",
+    "exec",
+    starter,
+    "editor-for-track",
+    "Drums",
+    "editor-for-track",
+    "Bass",
+    "editor-for-track",
+    "Chords",
+)
+assert "editor drum-grid identifier drumgrid" in editors
+assert editors.count("editor piano-roll") >= 2
 
 # sunroomMood/Guide live in the compressed .mgd payload; dump-json DTO omits them.
 # Fixture A code sets sunroomMood=1 + sunroomGuide; keyRoot/quality above prove key.
@@ -109,10 +166,10 @@ result = {
     "keyRoot": info_root,
     "keyQuality": info_quality,
     "gates": {
-        "gui_make_beat_add_chords_play_sound": "code path — not GUI-audited",
-        "qwerty_text_focus": "code path — TextEditor guard + focus flush",
-        "scale_lock_new_notes_only": "theory_test + PianoRoll insert snap",
-        "drum_lanes_no_scale_lock": "DrumGrid does not call snapToScale",
+        "gui_make_beat_add_chords_play_sound": "Sound track stores magdasampler with Glass mote 01; panel not opened",
+        "qwerty_text_focus": "typing, outside, and no focus release held notes; inside the window keeps them",
+        "scale_lock_new_notes_only": "scale-lock-insert: A# snaps to B only when lock and guide are on",
+        "drum_lanes_no_scale_lock": "drum-grid insert stays 10; DrumGridClipContent does not call snapToScale",
     },
 }
 (qa / "result.json").write_text(json.dumps(result, indent=2) + "\n")

@@ -4,21 +4,25 @@ Adapted from `Magda_Cursor_Auto_Implementation_Plan.md` to this SUNROOM/MAGDA ch
 
 ## Current phase status
 
-| Phase | Status | Notes |
-|---|---|---|
-| P0 Inspect & map | **complete** (2026-09-17) | See `inventory.md`, `progress.md` |
-| P1 Edits, undo, recovery | **complete** (2026-09-17) | `verify_beginner_p1.py` PASS; GUI recovery prompt still pending |
-| P2 Offline starter (Fixture A) | **complete** (2026-09-17) | `fixture-a` + `verify_beginner_p2.py` PASS |
-| P3 First-session flow | **complete** (2026-09-17) | Beat/Song/Blank + Create and Play; GUI audible pending |
-| P4 Instruments / piano roll / QWERTY | **complete** (2026-09-17) | Guided entry + scale-lock + QWERTY focus; GUI audible pending |
-| P5 Arrangement ownership | **complete** (2026-09-17) | Fixture B/C + Place Scene conflict refuse; Capture Jam/Return/badges code paths; GUI audible pending |
-| P6 Progressive Mix | **complete** (2026-09-17) | Open Mix + Shared Space return reuse; Analyze unchanged; GUI audible pending |
-| P7 Conductor / safe apply | **complete** (2026-09-17) | Staged DSL proposal; mocks through real interpreter; live model is P8 |
-| P8 Local AI coach | **complete** (2026-09-17) | Absent model labeled honestly; SUNROOM_DSL stages through P7; live weights not loaded |
-| P9 Curated media | **complete** (2026-09-18) | Offline starter catalog filters + import; unknown BPM/key not guessed; GUI audition not run |
-| P10 Export Song | **next** | |
-| P11 E2E verification | pending | |
-| P12 Release handoff | pending | |
+Reconciled 2026-09-18 against `f6b5edb`. Older “complete” labels are historical implementation checkpoints, not acceptance. **partial** means some of the phase exists; it is not accepted while a required gate is pending.
+
+| Phase | Implementation | Headless verification | Native UI/audio | Model |
+|---|---|---|---|---|
+| P0 Inventory | partial — tracker refreshed; `build.ninja` still needs a CMake re-run before the next ninja build | passed — P5 assertion repaired and rerun on the current CLI | not run | n/a |
+| P1 History / recovery | partial — missing media and failed recovery leave the last save; native recovery dialog not run | passed 2026-09-18 (`verify_beginner_p1.py`, including steps 09–10) | not run | n/a |
+| P2 Starter recipes | partial — stored fader levels and a non-silent master render are proven; per-layer audio and Session playback are not | passed 2026-09-18 (`verify_beginner_p2.py`: volumes 0.55/0.45/0.35, 2s master WAV peak above silence) | not run | n/a |
+| P3 First session | partial — Beat/Song/Blank descriptions are in source; Session launch is not available headless | passed 2026-09-18 (`verify_beginner_p3.py`) | not run — tooltips and Arrange routing are source-only | n/a |
+| P4 Instruments / notes | partial — typing, leaving the window, or losing focus releases held keyboard notes; a control still inside the window keeps them | passed 2026-09-18 (`verify_beginner_p4.py`) | not run | n/a |
+| P5 Sections / ownership | partial — playback source counts only playable tracks. Empty projects and aux returns do not claim Arrangement | passed 2026-09-18 (`verify_beginner_p5.py`) | not run | n/a |
+| P6 Mix / Shared Space | partial — Analyze opens an offline measurement modal; findings are levels and collisions, not a score. The measurement itself was not run | passed 2026-09-18 (`verify_beginner_p6.py`, including findings text) | not run — button and modal not opened | n/a |
+| P7 Proposal boundary | partial — console agent DSL, music IR, and automation IR stage until apply. Point writes are not an undo step | passed 2026-09-18 (`verify_beginner_p7.py`) | not run | not run — mocks only |
+| P8 Live coach | partial — missing-model refusal and DSL staging exist | passed 2026-09-17 (`verify_beginner_p8.py`) | not run | not run — weights not loaded |
+| P9 Curated media | partial — shelf click previews through the sample browser in source; Shift-click still imports. Heard playback not proven | passed 2026-09-18 (`verify_beginner_p9.py`, including preview-sample leaving the project unchanged) | not run | n/a |
+| P10 Export | not started under this plan | not run | not run | n/a |
+| P11 Native journey | not started | not run | not run | not run |
+| P12 Handoff | not started | not run | not run | not run |
+
+**Next slice:** The chat panel still reads the generated clip id from execute, which no longer creates the clip. See whether apply can record that clip id. Do not start P10. Do not load a model.
 
 ## Architecture reuse (non-negotiable)
 
