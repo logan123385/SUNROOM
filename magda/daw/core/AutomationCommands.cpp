@@ -834,8 +834,13 @@ void SetAutomationLanePointsCommand::execute() {
     // a clear followed by N inserts.
     AutomationManager::BatchScope batch;
     mgr.clearLanePoints(laneId_);
-    for (const auto& point : points_)
-        mgr.addPoint(laneId_, point.beatPosition, point.value, point.curveType);
+    for (const auto& point : points_) {
+        const auto newId = mgr.addPoint(laneId_, point.beatPosition, point.value, point.curveType);
+        if (newId == INVALID_AUTOMATION_POINT_ID)
+            continue;
+        mgr.setPointTension(laneId_, newId, point.tension);
+        mgr.setPointHandles(laneId_, newId, point.inHandle, point.outHandle);
+    }
 
     applied_ = true;
 }

@@ -949,8 +949,10 @@ class CommandDispatcher {
         if (readiness.contains("not installed"))
             return fail(readiness);
         std::cout << "provider this-mac-mlx\n";
+        magda::SunroomMlxClient::resetCoachCancellation();
         const auto requestId = magda::sunroom::beginCoachRequest();
         std::cout << "request " << static_cast<unsigned long long>(requestId) << "\n";
+        const auto context = magda::sunroom::coachContextPacket();
         std::thread cancelThread;
         if (cancelMs > 0) {
             cancelThread = std::thread([cancelMs] {
@@ -959,8 +961,7 @@ class CommandDispatcher {
                 magda::SunroomMlxClient::cancelCoachRequests();
             });
         }
-        const auto result =
-            magda::SunroomMlxClient::coach(question, magda::sunroom::coachContextPacket(), 1, {}, {});
+        const auto result = magda::SunroomMlxClient::coach(question, context, 1, {}, {});
         if (cancelThread.joinable())
             cancelThread.join();
         std::cout << "latency " << juce::String(result.wallSeconds, 2) << "\n";

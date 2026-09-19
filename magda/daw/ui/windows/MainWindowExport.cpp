@@ -86,14 +86,15 @@ class ExportProgressWindow : public juce::ThreadWithProgressWindow {
             setStatusMessage(strFailed_);
             return;
         }
-        if (partFile_ != outputFile_) {
-            if (outputFile_.existsAsFile() && !outputFile_.deleteFile()) {
-                errorMessage_ = errFileNotCreated_;
+        if (threadShouldExit()) {
+            errorMessage_ = errCancelled_;
+            if (partFile_ != outputFile_ && partFile_.existsAsFile())
                 partFile_.deleteFile();
-                setStatusMessage(strFailed_);
-                return;
-            }
-            if (!partFile_.moveFileTo(outputFile_)) {
+            setStatusMessage(strFailed_);
+            return;
+        }
+        if (partFile_ != outputFile_) {
+            if (!partFile_.replaceFileIn(outputFile_)) {
                 errorMessage_ = errFileNotCreated_;
                 partFile_.deleteFile();
                 setStatusMessage(strFailed_);

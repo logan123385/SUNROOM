@@ -165,12 +165,12 @@ if home_ai.is_file():
         timeout=180,
     )
     canceled_text = canceled.stdout + canceled.stderr
+    assert canceled.returncode != 0
     assert "sk-" not in canceled_text
     assert (
         "canceled" in canceled_text.lower()
         or "stopped" in canceled_text.lower()
         or "did not respond" in canceled_text.lower()
-        or "Refused" in canceled_text
     )
 
 result = {

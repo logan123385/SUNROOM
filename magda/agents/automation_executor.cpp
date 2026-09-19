@@ -105,10 +105,18 @@ AutomationClipId resolveClipId(MagdaApi& api, AutomationClipId requested, juce::
     return clipId;
 }
 
+AutomationLaneId existingLaneForTarget(MagdaApi& api, const AutomationTarget& target,
+                                       juce::String& err) {
+    const auto existing = api.automation().getLaneForTarget(target);
+    if (existing == INVALID_AUTOMATION_LANE_ID)
+        err = "No automation lane exists for that parameter.";
+    return existing;
+}
+
 /** Resolve an AutoTarget into a concrete lane id, or INVALID. */
 AutomationLaneId resolveTarget(MagdaApi& api, const AutoTarget& target, juce::String& err,
                                AutomationLaneType createType = AutomationLaneType::Absolute,
-                               bool* createdLane = nullptr) {
+                               bool* createdLane = nullptr, bool createIfMissing = true) {
     if (createdLane != nullptr)
         *createdLane = false;
     switch (target.kind) {
@@ -138,6 +146,8 @@ AutomationLaneId resolveTarget(MagdaApi& api, const AutoTarget& target, juce::St
             AutomationTarget t;
             t.kind = ControlTarget::Kind::TrackVolume;
             t.devicePath = ChainNodePath::trackLevel(trackId);
+            if (!createIfMissing)
+                return existingLaneForTarget(api, t, err);
             return ensureLaneForTarget(api, t, createType, createdLane);
         }
         case AutoTarget::Kind::TrackPan: {
@@ -147,6 +157,8 @@ AutomationLaneId resolveTarget(MagdaApi& api, const AutoTarget& target, juce::St
             AutomationTarget t;
             t.kind = ControlTarget::Kind::TrackPan;
             t.devicePath = ChainNodePath::trackLevel(trackId);
+            if (!createIfMissing)
+                return existingLaneForTarget(api, t, err);
             return ensureLaneForTarget(api, t, createType, createdLane);
         }
         case AutoTarget::Kind::Alias: {
@@ -168,6 +180,8 @@ AutomationLaneId resolveTarget(MagdaApi& api, const AutoTarget& target, juce::St
             t.kind = ControlTarget::Kind::PluginParam;
             t.devicePath = resolved.target.devicePath;
             t.paramIndex = resolved.target.paramIndex;
+            if (!createIfMissing)
+                return existingLaneForTarget(api, t, err);
             return ensureLaneForTarget(api, t, createType, createdLane);
         }
     }
@@ -295,8 +309,11 @@ bool emitShapePoints(AutomationApi& mgr, AutomationLaneId laneId, const AutoShap
             break;
         }
     }
-    if (points.size() == before)
+    if (points.size() == before) {
+        if (createdLane)
+            mgr.deleteLane(laneId);
         return true;
+    }
     return commitLanePoints(mgr, laneId, std::move(points), createdLane);
 }
 
@@ -415,7 +432,8 @@ bool AutomationExecutor::execute(const std::vector<AutoInstruction>& instruction
 
         if (std::holds_alternative<AutoClearOp>(inst.payload)) {
             auto& op = std::get<AutoClearOp>(inst.payload);
-            auto laneId = resolveTarget(api_, op.target, err);
+            auto laneId = resolveTarget(api_, op.target, err, AutomationLaneType::Absolute, nullptr,
+                                        false);
             if (laneId == INVALID_AUTOMATION_LANE_ID) {
                 error_ = err;
                 return false;
@@ -431,6 +449,8 @@ bool AutomationExecutor::execute(const std::vector<AutoInstruction>& instruction
 
         if (std::holds_alternative<AutoFreeformOp>(inst.payload)) {
             auto& op = std::get<AutoFreeformOp>(inst.payload);
+            if (op.points.empty())
+                continue;
             bool createdLane = false;
             auto laneId = resolveTarget(api_, op.target, err, AutomationLaneType::Absolute,
                                         &createdLane);

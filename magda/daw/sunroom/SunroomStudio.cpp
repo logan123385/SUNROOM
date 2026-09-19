@@ -1563,6 +1563,7 @@ void SunroomStudio::askCoach() {
     if (aiThread_.joinable())
         aiThread_.join();
     cancelled_ = false;
+    SunroomMlxClient::resetCoachCancellation();
     const auto requestId = beginCoachRequest();
     recipe_ = juce::var{};
     applyRecipe_.setVisible(false);

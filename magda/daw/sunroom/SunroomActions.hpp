@@ -433,7 +433,7 @@ juce::String unsupportedActionRefusal(const juce::String& dsl,
 /** Empty if every non-empty line is a project, track, filter, or groove statement. */
 juce::String incompleteActionRefusal(const juce::String& dsl);
 const StagedDslProposal* pendingDslProposal();
-const ConductorState& conductorState();
+ConductorState conductorState();
 void setConductorView(ConductorView view);
 juce::String conductorViewName(ConductorView view);
 juce::String conductorReplyKindName(ConductorReplyKind kind);

@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <type_traits>
 #include <variant>
 
@@ -1284,6 +1285,11 @@ class ConductorViewModeListener final : public ViewModeListener {
     }
 };
 
+std::mutex& conductorLock() {
+    static std::mutex mutex;
+    return mutex;
+}
+
 ConductorState& conductorSlot() {
     static ConductorState state;
     static ConductorViewModeListener listener;
@@ -1779,6 +1785,7 @@ StagedDslProposal captureDslProposal(const juce::String& dsl, const juce::String
     proposal.appliedDelta = {};
     proposal.phase = ProposalPhase::Ready;
     pendingSlot() = proposal;
+    std::lock_guard<std::mutex> lock(conductorLock());
     auto& conductor = conductorSlot();
     conductor.replyKind = ConductorReplyKind::SongEdit;
     if (conductor.plan.isEmpty()) {
@@ -1809,6 +1816,7 @@ juce::String extractCoachDsl(const juce::String& text) {
 
 std::uint64_t beginCoachRequest() {
     static std::uint64_t nextId = 1;
+    std::lock_guard<std::mutex> lock(conductorLock());
     auto& conductor = conductorSlot();
     conductor.coachRequestId = nextId++;
     conductor.coachInFlight = true;
@@ -1821,6 +1829,7 @@ std::uint64_t beginCoachRequest() {
 }
 
 juce::String cancelCoachRequest() {
+    std::lock_guard<std::mutex> lock(conductorLock());
     auto& conductor = conductorSlot();
     if (conductor.coachRequestId == 0)
         return "Refused: no in-flight coach request. Music is unchanged.";
@@ -1830,19 +1839,22 @@ juce::String cancelCoachRequest() {
 }
 
 juce::String completeCoachRequest(std::uint64_t id, const juce::String& text) {
-    auto& conductor = conductorSlot();
-    if (id == 0 || id != conductor.coachRequestId)
-        return "Refused: late coach result; proposal was not staged. Music is unchanged.";
-    if (conductor.coachCancelled)
-        return "Refused: coach result canceled; proposal was not staged. Music is unchanged.";
-    if (!conductor.coachInFlight)
-        return "Refused: late coach result; proposal was not staged. Music is unchanged.";
-    conductor.coachInFlight = false;
-    if (conductor.coachMutationRevision != ProjectManager::getInstance().mutationRevision() ||
-        conductor.coachSelectedTrack != SelectionManager::getInstance().getSelectedTrack() ||
-        conductor.coachSelectedClip != SelectionManager::getInstance().getSelectedClip())
-        return "Refused: the song changed while the companion was thinking. Suggestion was not "
-               "staged.";
+    {
+        std::lock_guard<std::mutex> lock(conductorLock());
+        auto& conductor = conductorSlot();
+        if (id == 0 || id != conductor.coachRequestId)
+            return "Refused: late coach result; proposal was not staged. Music is unchanged.";
+        if (conductor.coachCancelled)
+            return "Refused: coach result canceled; proposal was not staged. Music is unchanged.";
+        if (!conductor.coachInFlight)
+            return "Refused: late coach result; proposal was not staged. Music is unchanged.";
+        conductor.coachInFlight = false;
+        if (conductor.coachMutationRevision != ProjectManager::getInstance().mutationRevision() ||
+            conductor.coachSelectedTrack != SelectionManager::getInstance().getSelectedTrack() ||
+            conductor.coachSelectedClip != SelectionManager::getInstance().getSelectedClip())
+            return "Refused: the song changed while the companion was thinking. Suggestion was not "
+                   "staged.";
+    }
     if (const auto why = modelActionRefusal(text); why.isNotEmpty())
         return why;
     const auto dsl = extractCoachDsl(text);
@@ -1876,7 +1888,8 @@ const StagedDslProposal* pendingDslProposal() {
     return &slot;
 }
 
-const ConductorState& conductorState() {
+ConductorState conductorState() {
+    std::lock_guard<std::mutex> lock(conductorLock());
     return conductorSlot();
 }
 
@@ -1899,6 +1912,7 @@ juce::String conductorViewName(ConductorView view) {
 }
 
 void setConductorView(ConductorView view) {
+    std::lock_guard<std::mutex> lock(conductorLock());
     conductorSlot().view = view;
 }
 
@@ -1919,6 +1933,7 @@ juce::String conductorReplyKindName(ConductorReplyKind kind) {
 }
 
 void captureExplanation(const juce::String& text) {
+    std::lock_guard<std::mutex> lock(conductorLock());
     auto& conductor = conductorSlot();
     if (pendingDslProposal() == nullptr)
         conductor.replyKind = ConductorReplyKind::Explanation;
@@ -1938,6 +1953,7 @@ bool captureSettingsRecipe(const ConductorSettings& settings) {
     options.bars = settings.bars;
     options.tempo = settings.tempo;
     options = sanitise(options);
+    std::lock_guard<std::mutex> lock(conductorLock());
     auto& conductor = conductorSlot();
     conductor.replyKind = ConductorReplyKind::Settings;
     conductor.settingsPending = true;
@@ -1951,6 +1967,7 @@ bool captureSettingsRecipe(const ConductorSettings& settings) {
 }
 
 juce::String applySettingsRecipe() {
+    std::lock_guard<std::mutex> lock(conductorLock());
     auto& conductor = conductorSlot();
     if (pendingDslProposal() != nullptr)
         return "Refused: a song edit is staged; settings were not applied as music";
@@ -2682,13 +2699,12 @@ juce::String runExportSong(AudioEngine& engine, const juce::File& destination, b
                    ? juce::String("Refused: export failed. ") + result.error
                    : juce::String("Refused: export failed. Music is unchanged.");
     }
-    if (destination.existsAsFile() && !destination.deleteFile()) {
+    if (!part.replaceFileIn(destination)) {
         part.deleteFile();
-        return "Refused: could not replace the existing export. Music is unchanged.";
-    }
-    if (!part.moveFileTo(destination)) {
-        part.deleteFile();
-        return "Refused: export could not be finalized. Music is unchanged.";
+        return destination.existsAsFile()
+                   ? juce::String("Refused: could not replace the existing export. Music is "
+                                  "unchanged.")
+                   : juce::String("Refused: export could not be finalized. Music is unchanged.");
     }
     return {};
 }

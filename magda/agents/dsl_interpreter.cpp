@@ -438,7 +438,7 @@ bool Interpreter::execute(const char* dslCode) {
                              : succeeded == 0 ? "All " + juce::String(failed) + " commands failed"
                                               : juce::String(failed) + " command(s) failed";
         ctx_.setError(summary + (reasons.isEmpty() ? juce::String() : ": " + reasons));
-        return succeeded > 0;
+        return false;
     }
 
     return true;
