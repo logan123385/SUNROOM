@@ -2,6 +2,7 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <array>
 #include <atomic>
 #include <thread>
 
@@ -61,7 +62,7 @@ class SunroomStudio final : public juce::Component,
         makeBeat_{"Make a Beat"}, addChords_{"Add Chords"}, playSound_{"Play a Sound"},
         captureJam_{"Capture Jam"}, placeScene_{"Place Scene"}, returnArrange_{"Return to Arrangement"},
         openMix_{"Open Mix"}, sharedSpace_{"Shared Space"},
-        journey_{"Mood journey"}, save_{"Save project"}, export_{"Export audio"}, undo_{"Undo"},
+        journey_{"Mood journey"}, save_{"Save project"}, export_{"Export song"}, undo_{"Undo"},
         studio_{"Full studio"}, skipGuide_{"Skip guide"}, ask_{"Ask SUNROOM"}, cancelAI_{"Stop"},
         addPhrase_{"Add melody to song"}, clearPhrase_{"Clear melody"},
         library_{"Open sound folder"}, applyRecipe_{"Use these settings"},
@@ -72,6 +73,7 @@ class SunroomStudio final : public juce::Component,
     std::array<juce::TextButton, 3> starterButtons_;
     std::array<juce::TextButton, 4> moodButtons_;
     std::array<juce::ToggleButton, 7> layerButtons_;
+    std::array<juce::TextButton, 5> coachPromptButtons_;
     juce::ComboBox root_, length_, aiBackend_, soundFilter_;
     juce::Slider tempo_, motion_, space_, warmth_;
     juce::TextEditor prompt_, answer_, remoteUrl_, remoteModel_, apiKey_;

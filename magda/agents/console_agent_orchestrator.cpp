@@ -270,9 +270,15 @@ ConsoleExecutionResult ConsoleAgentResultExecutor::execute(ConsoleRunOutput outp
             juce::String(output.dslCode), "Staged from console agent. Not applied until apply.",
             output.musicInstructions, juce::String(output.musicDescription), reviseTargetClipId,
             reviseTargetClipId != INVALID_CLIP_ID, output.automationInstructions);
-        if (!output.musicDescription.empty())
-            result.response = output.musicDescription + "\n";
-        result.response += "Staged " + std::to_string(proposal.id) + ". Not applied.";
+        if (proposal.id == 0) {
+            result.response = proposal.explanation.isNotEmpty()
+                                  ? proposal.explanation.toStdString()
+                                  : "Refused: proposal was not staged. Music is unchanged.";
+        } else {
+            if (!output.musicDescription.empty())
+                result.response = output.musicDescription + "\n";
+            result.response += "Staged " + std::to_string(proposal.id) + ". Not applied.";
+        }
     }
 
     if (!output.prose.empty()) {

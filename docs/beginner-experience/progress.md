@@ -730,6 +730,355 @@ Next eligible slice and its exact first action:
   See whether apply can record the generated clip id. Do not start P10.
 ```
 
+## Checkpoint — P7 applied clip id (2026-09-18)
+
+```
+Phase/slice: Apply records the MIDI clip created by a staged note
+Requirement IDs: P7 item 1
+Source revision + dirty files; binary/build identity:
+  Not committed. CLI sha256 c295cbb1b6f78c2493b76747b946b0d8dab9c21ed3a55b708976e99f96c0fb6e
+  mtime 2026-09-18 23:52:37. Manual link. SUNROOM.app still 2026-09-17.
+User-visible behavior delivered: none in the installed app.
+Reused components and changed files:
+  StagedDslProposal.appliedMusicClip; apply notifies the console observer
+  magda_cli agent-note-stage prints clips before apply; apply-proposal prints clip id
+  scripts/verify_beginner_p7.py
+Automated checks: python3 scripts/verify_beginner_p7.py -> PASS
+  Staged, clips 0 before Applied, then clip 1
+Native UI/audio checks actually performed: none. Chat panel not opened.
+Live model/provider checks actually performed: none. Weights were not loaded.
+Remaining acceptance gates:
+  addPoint writes are not undoable, so the curve is not an undo step
+  installed app does not include the chat observer
+Next eligible slice and its exact first action:
+  See whether one applied curve can undo as one step. Do not start P10. Do not load a model.
+```
+
+## Checkpoint — P7 automation curve undo (2026-09-19)
+
+```
+Phase/slice: One applied automation curve undoes as one step
+Requirement IDs: P7 item 1
+Source revision + dirty files; binary/build identity:
+  Not committed. CLI sha256 cec2d3ca88dd94f7d5be436c1114c0cd0a962e2594f6170e6e4cc4a1c6210e94
+  mtime 2026-09-19 00:12:21. Manual link. SUNROOM.app still 2026-09-17.
+User-visible behavior delivered: none in the installed app.
+Reused components and changed files:
+  AutomationExecutor writes a curve through setLanePoints
+  A lane created for that curve is removed on undo
+  scripts/verify_beginner_p7.py
+Automated checks: python3 scripts/verify_beginner_p7.py -> PASS
+  points 0 before Applied, Wrote 2 points, Undid: Apply suggestion, points 0
+Native UI/audio checks actually performed: none.
+Live model/provider checks actually performed: none. Weights were not loaded.
+Remaining acceptance gates:
+  undo label is still Apply suggestion for every staged edit
+  clearLanePoints is still not an undo step
+  installed app does not include the chat observer
+Next eligible slice and its exact first action:
+  See whether the undo step can name the staged action. Do not start P10. Do not load a model.
+```
+
+## Checkpoint — P7 suggestion undo name (2026-09-19)
+
+```
+Phase/slice: Each applied suggestion has its own undo name
+Requirement IDs: P7 item 7
+Source revision + dirty files; binary/build identity:
+  Not committed. CLI sha256 1e9ba87db3abbea4d1f0f4d1360ffdefc81342603243f533b65e64c34ae40aa2
+  mtime 2026-09-19 00:20:08. Manual link. SUNROOM.app still 2026-09-17.
+User-visible behavior delivered: none in the installed app.
+Reused components and changed files:
+  suggestionUndoLabel; StagedDslProposal.appliedUndoLabel
+  Hear before matches that label instead of the generic Apply suggestion text
+  scripts/verify_beginner_p7.py
+Automated checks: python3 scripts/verify_beginner_p7.py -> PASS
+  Undid: Apply suggestion 2: track volume
+  Undid: Apply suggestion 1: project.set(bpm=90)
+Native UI/audio checks actually performed: none. Hear before was not clicked.
+Live model/provider checks actually performed: none. Weights were not loaded.
+Remaining acceptance gates:
+  the named step does not store a before/after delta
+  clearLanePoints is still not an undo step
+  installed app was not relinked
+Next eligible slice and its exact first action:
+  See whether the named undo step can store a before/after delta. Do not start P10. Do not load a model.
+```
+
+## Checkpoint — P7 suggestion delta (2026-09-19)
+
+```
+Phase/slice: Named apply stores a before/after project delta
+Requirement IDs: P7 item 7
+Source revision + dirty files; binary/build identity:
+  Not committed. CLI sha256 2c923d78199e597c865c359ff1e9415b3135bd9a19551af90cf1b626d06e430e
+  mtime 2026-09-19 00:23:23. Manual link. SUNROOM.app still 2026-09-17.
+User-visible behavior delivered: none in the installed app.
+Reused components and changed files:
+  StagedDslProposal.appliedDelta; tempo/signature/track/clip/point snapshot
+  apply-proposal prints delta lines; Hear before can append the stored delta
+  scripts/verify_beginner_p7.py
+Automated checks: python3 scripts/verify_beginner_p7.py -> PASS
+  delta tempo 84.0 -> 90.0
+  delta points 0 -> 2
+Native UI/audio checks actually performed: none. Hear before was not clicked.
+Live model/provider checks actually performed: none. Weights were not loaded.
+Remaining acceptance gates:
+  clearLanePoints is still not an undo step
+  one conversation/plan still does not survive view changes
+  installed app was not relinked
+Next eligible slice and its exact first action:
+  See whether one clear can undo as one step. Do not start P10. Do not load a model.
+```
+
+## Checkpoint — P7 automation clear undo (2026-09-19)
+
+```
+Phase/slice: One applied lane clear undoes as one step
+Requirement IDs: P7 item 1
+Source revision + dirty files; binary/build identity:
+  Not committed. CLI sha256 5c82d754013c1bd351bb70c665f3eb2973a9c39c867fbe2d5b3a54214720e893
+  mtime 2026-09-19 00:25:40. Manual link. SUNROOM.app still 2026-09-17.
+User-visible behavior delivered: none in the installed app.
+Reused components and changed files:
+  AutomationApiLive::clearLanePoints writes an empty setLanePoints command
+  magda_cli agent-automation-clear; scripts/verify_beginner_p7.py
+Automated checks: python3 scripts/verify_beginner_p7.py -> PASS
+  Cleared lane, delta points 2 -> 0, Undid clear track volume, points 2
+Native UI/audio checks actually performed: none.
+Live model/provider checks actually performed: none. Weights were not loaded.
+Remaining acceptance gates:
+  one conversation/plan still does not survive view changes
+  installed app was not relinked
+Next eligible slice and its exact first action:
+  See whether staged proposal identity can stay with the project across Create, Session, Arrange, and Mix. Do not start P10. Do not load a model.
+```
+
+## Checkpoint — P7 conductor views (2026-09-19)
+
+```
+Phase/slice: One project session keeps proposal identity across Create, Session, Arrange, Mix
+Requirement IDs: P7 item 2
+Source revision + dirty files; binary/build identity:
+  Not committed. CLI sha256 4eec3346b1df3e81028ca4e53c12dbc398e95e52d5564ee12c201a7cede894f8
+  mtime 2026-09-19 00:29:38. Manual link. SUNROOM.app still 2026-09-17.
+User-visible behavior delivered: none in the installed app.
+Reused components and changed files:
+  ProjectManager::projectSessionId; ConductorState; setConductorView
+  magda_cli conductor-view, conductor-status, new-project
+  scripts/verify_beginner_p7.py
+Automated checks: python3 scripts/verify_beginner_p7.py -> PASS
+  same conversation and proposal-id through four views; new-project proposal no
+Native UI/audio checks actually performed: none. Views were not opened.
+Live model/provider checks actually performed: none. Weights were not loaded.
+Remaining acceptance gates:
+  explanation, settings-only recipes, and song edits still share one surface
+  installed app was not relinked
+Next eligible slice and its exact first action:
+  See whether a settings-only reply can stay unapplied as music. Do not start P10. Do not load a model.
+```
+
+## Checkpoint — P7 settings-only recipe (2026-09-19)
+
+```
+Phase/slice: Settings-only replies do not apply as music
+Requirement IDs: P7 item 3
+Source revision + dirty files; binary/build identity:
+  Not committed. CLI sha256 4b27c01e2b24dfedb6468025fc3b037203ea4c71a52e0d0737b5c8b683eb584f
+  mtime 2026-09-19 00:32:38. Manual link. SUNROOM.app still 2026-09-17.
+User-visible behavior delivered: none in the installed app.
+Reused components and changed files:
+  ConductorReplyKind; captureSettingsRecipe; applySettingsRecipe
+  apply recipe button stays Use these settings
+  magda_cli coach-explain, settings-recipe, apply-settings
+  scripts/verify_beginner_p7.py
+Automated checks: python3 scripts/verify_beginner_p7.py -> PASS
+  kind explanation, Settings applied, tracks 0, blank tempo unchanged
+Native UI/audio checks actually performed: none. Use these settings was not clicked.
+Live model/provider checks actually performed: none. Weights were not loaded.
+Remaining acceptance gates:
+  model replies are not prevalidated for shell, code, or missing targets
+  installed app was not relinked
+Next eligible slice and its exact first action:
+  See whether those replies can be refused without writing the song. Do not start P10. Do not load a model.
+```
+
+## Checkpoint — P7 model reply prevalidate (2026-09-19)
+
+```
+Phase/slice: Refuse shell, code, and missing-track model replies before a song write
+Requirement IDs: P7 item 4
+Source revision + dirty files; binary/build identity:
+  Not committed. CLI sha256 847314882219473322a6e993ab1831122ebb20046458ebc056c428ce70699e6a
+  mtime 2026-09-19 00:37:17. Manual link. SUNROOM.app still 2026-09-17.
+User-visible behavior delivered: none in the installed app.
+Reused components and changed files:
+  modelActionRefusal; missingDslTargetRefusal; captureDslProposal; applyPendingDslProposal
+  SunroomStudio coach staging; ConsoleAgentResultExecutor
+  magda_cli coach-stage, propose-dsl, agent-dsl-stage
+  scripts/verify_beginner_p7.py
+Automated checks: python3 scripts/verify_beginner_p7.py -> PASS
+  01y shell or code refused, proposal no, blank dump unchanged
+  01z missing filter name refused; 01z2 track(id=99) refused; Applied: absent
+Native UI/audio checks actually performed: none. Coach apply was not clicked.
+Live model/provider checks actually performed: none. Weights were not loaded.
+Remaining acceptance gates:
+  parameter ranges, supported devices, and asset references are not prevalidated
+  installed app was not relinked
+Next eligible slice and its exact first action:
+  See whether those replies can be refused without writing the song. Do not start P10. Do not load a model.
+```
+
+## Checkpoint — P7 range device asset prevalidate (2026-09-19)
+
+```
+Phase/slice: Refuse out-of-range parameters, unknown devices, and missing starter sounds before a song write
+Requirement IDs: P7 item 4
+Source revision + dirty files; binary/build identity:
+  Not committed. CLI sha256 54a12ed29a282c6f34cefe76ef5d109c9097205c4e277c04a98067e131ee7e03
+  mtime 2026-09-19 01:16:04. Manual link. SUNROOM.app still 2026-09-17.
+User-visible behavior delivered: none in the installed app.
+Reused components and changed files:
+  unsupportedActionRefusal; TempoUtils; lookupInternalPluginByAlias; resolveStarterFile
+  captureDslProposal; applyPendingDslProposal; magda_cli coach-stage
+  scripts/verify_beginner_p7.py
+Automated checks: python3 scripts/verify_beginner_p7.py -> PASS
+  01aa bpm=2000 refused; 01ab NotADevice refused, no Lead track
+  01ac GhostTake.wav refused, no Sound track; Applied: absent
+Native UI/audio checks actually performed: none. Coach apply was not clicked.
+Live model/provider checks actually performed: none. Weights were not loaded.
+Remaining acceptance gates:
+  a multi-action proposal is not checked as a whole before apply
+  installed app was not relinked
+Next eligible slice and its exact first action:
+  See whether one bad step can refuse the rest without writing the song. Do not start P10. Do not load a model.
+```
+
+## Checkpoint — P7 multi-action prevalidate (2026-09-19)
+
+```
+Phase/slice: Refuse a multi-action reply as a whole when one step is not a song action
+Requirement IDs: P7 item 4
+Source revision + dirty files; binary/build identity:
+  Not committed. CLI sha256 e494774319bfdd0738495c02e58375ca9cc8045eea967ba13158a1a7e702eba3
+  mtime 2026-09-19 01:20:08. Manual link. SUNROOM.app still 2026-09-17.
+User-visible behavior delivered: none in the installed app.
+Reused components and changed files:
+  extractCoachDsl; incompleteActionRefusal; Interpreter::failedStatementCount
+  applyPendingDslProposal; magda_cli coach-stage; SunroomStudio
+  scripts/verify_beginner_p7.py
+Automated checks: python3 scripts/verify_beginner_p7.py -> PASS
+  01ad bpm=90 plus NotADevice refused; tempo unchanged; no Lead
+  01ae bpm=90 plus prose step refused; python3 scripts/verify_beginner_p8.py -> PASS
+Native UI/audio checks actually performed: none. Coach apply was not clicked.
+Live model/provider checks actually performed: none. Weights were not loaded.
+Remaining acceptance gates:
+  a late or canceled coach result can still apply an old proposal
+  installed app was not relinked
+Next eligible slice and its exact first action:
+  See whether those results can be refused without writing the song. Do not start P10. Do not load a model.
+```
+
+## Checkpoint — P12 handoff (2026-09-19)
+
+```
+Phase/slice: Local review handoff after P8 live + P10 export
+Requirement IDs: P12 items 1-4
+Source revision + dirty files; binary/build identity:
+  Not committed. CLI sha256 16da207e6203fdbc5ed2763e116426928e9fa5aca4f749b5b2abaf5ee103e51f
+  mtime 2026-09-19 01:43:53. Manual clang++ link. SUNROOM.app still 2026-09-17 20:59:08.
+User-visible behavior delivered: none in the installed app. CLI has coach-ask and export-song.
+Reused components: SunroomMlxClient, OfflineRenderHelper, ExportAudioDialog path, P7 coach request lifecycle
+Automated checks:
+  python3 scripts/verify_beginner_p8.py -> PASS (live MLX)
+  python3 scripts/verify_beginner_p10.py -> PASS
+Native UI/audio checks actually performed: none
+Live model/provider checks:
+  this-mac-mlx / mlx-community/Qwen3.5-4B-4bit / revision 0e7ffd5c629ef7719d4cbc04069232580bfa9d9c
+  live ask 63.98s; cancel refused staging; no cloud key used
+Remaining acceptance gates:
+  P11 native app still 2026-09-17
+  heard A/B, cloud, LAN, GUI Reveal/Open
+  Aikido scan tool not invokable in this session
+Next eligible slice and its exact first action:
+  Relink SUNROOM.app from current objects, then run the P11 native journey on a disposable profile.
+```
+
+## Checkpoint — P10 export song (2026-09-19)
+
+```
+Phase/slice: Beginner Export song is Arrangement-only with safe finalize
+Requirement IDs: P10 items 1-6
+Source revision + dirty files; binary/build identity:
+  Not committed. CLI sha256 16da207e6203fdbc5ed2763e116426928e9fa5aca4f749b5b2abaf5ee103e51f
+  mtime 2026-09-19 01:43:53. Manual link. SUNROOM.app still 2026-09-17.
+User-visible behavior delivered: none in the installed app. Source button label is Export song.
+Reused components and changed files:
+  planExportSong / runExportSong; magda_cli export-song; MainWindowExport temp finalize
+  scripts/verify_beginner_p10.py
+Automated checks: python3 scripts/verify_beginner_p10.py -> PASS
+  empty refused; Fixture B preview 76.80s; Fixture C WAV 8 bars stereo 44100
+  overwrite blocked then replaced; cancel left bytes; unwritable refused
+Native UI/audio checks actually performed: none. File chooser and Reveal were not opened.
+Live model/provider checks actually performed: n/a
+Remaining acceptance gates:
+  GUI dialog, Reveal/Open, heard export
+Next eligible slice and its exact first action:
+  P11 native app after a relink.
+```
+
+## Checkpoint — P8 live local coach (2026-09-19)
+
+```
+Phase/slice: Live local MLX coach through the P7 request lifecycle
+Requirement IDs: P8 items 1-10 that can be proven headless
+Source revision + dirty files; binary/build identity:
+  Not committed. CLI sha256 16da207e6203fdbc5ed2763e116426928e9fa5aca4f749b5b2abaf5ee103e51f
+  mtime 2026-09-19 01:43:53. Manual link. SUNROOM.app still 2026-09-17.
+User-visible behavior delivered: none in the installed app.
+Reused components and changed files:
+  coachContextPacket; supportedCoachPrompts; coach-ask; select-named-clip
+  SunroomMlxClient::localModelStatus identity; resources/sunroom/knowledge/coach.md
+  scripts/verify_beginner_p8.py
+Automated checks: python3 scripts/verify_beginner_p8.py -> PASS
+  isolated profile: not installed
+  live profile: files present, ask 63.98s, named drums notes 24/25/26, music unchanged
+  cancel: refused staging
+Native UI/audio checks actually performed: none. Hear before/after not clicked.
+Live model/provider checks actually performed:
+  this-mac-mlx / mlx-community/Qwen3.5-4B-4bit / 0e7ffd5c629ef7719d4cbc04069232580bfa9d9c
+  Cloud and LAN not run. No key invented.
+Remaining acceptance gates:
+  heard A/B; cloud; LAN; native coach UI
+Next eligible slice and its exact first action:
+  P10 export was implemented in the same session.
+```
+
+## Checkpoint — P7 late canceled apply (2026-09-19)
+
+```
+Phase/slice: Refuse late and canceled coach results, plus save-as, rename, and delete, before a song write
+Requirement IDs: P7 items 5 and 6
+Source revision + dirty files; binary/build identity:
+  Not committed. CLI sha256 bd478a0e1112f01093d48091f87612ef9945a50b1f6e8c4616995bc415c7e937
+  mtime 2026-09-19 01:24:11. Manual link. SUNROOM.app still 2026-09-17.
+User-visible behavior delivered: none in the installed app.
+Reused components and changed files:
+  beginCoachRequest; cancelCoachRequest; completeCoachRequest
+  SunroomStudio ask/cancel; magda_cli coach-begin, coach-cancel, coach-arrive, save-as
+  rename-track; delete-named-track; scripts/verify_beginner_p7.py
+Automated checks: python3 scripts/verify_beginner_p7.py -> PASS
+  01af late request 1 after request 2 refused; 01ag canceled arrive refused
+  01ah save-as then apply refused; 01ai rename Ghost and 01aj delete Ghost refused
+Native UI/audio checks actually performed: none. Cancel AI was not clicked.
+Live model/provider checks actually performed: none. Weights were not loaded.
+Remaining acceptance gates:
+  P8 live local model is not run
+  installed app was not relinked
+Next eligible slice and its exact first action:
+  P8 still needs a live local model. Do not start P10. Do not load a model.
+```
+
 ## Checkpoint — P9 (2026-09-18)
 
 ```

@@ -363,8 +363,42 @@ class ImportStarterSampleCommand final : public UndoableCommand {
  */
 enum class ProposalPhase { Ready, Applying, Applied, Rejected, Canceled, Failed, Stale };
 
+/** Guided Create plus the three Full studio views the conductor must survive. */
+enum class ConductorView { Create, Session, Arrange, Mix };
+
+/** Explanation and settings are not song edits. */
+enum class ConductorReplyKind { Explanation, Settings, SongEdit };
+
+struct ConductorSettings {
+    int mood = 0;
+    int root = 2;
+    int bars = 8;
+    double tempo = 84.0;
+};
+
+struct ConductorState {
+    std::uint64_t projectSessionId = 0;
+    ConductorView view = ConductorView::Create;
+    juce::String conversationId;
+    juce::String plan;
+    juce::String provider;
+    juce::String model;
+    std::uint64_t requestId = 0;
+    std::uint64_t coachRequestId = 0;
+    bool coachInFlight = false;
+    bool coachCancelled = false;
+    std::uint64_t coachMutationRevision = 0;
+    TrackId coachSelectedTrack = INVALID_TRACK_ID;
+    ClipId coachSelectedClip = INVALID_CLIP_ID;
+    ConductorReplyKind replyKind = ConductorReplyKind::Explanation;
+    bool settingsPending = false;
+    bool settingsApplied = false;
+    ConductorSettings settings;
+};
+
 struct StagedDslProposal {
     std::uint64_t id = 0;
+    std::uint64_t projectSessionId = 0;
     juce::String projectPath;
     std::uint64_t mutationRevision = 0;
     TrackId selectedTrack = INVALID_TRACK_ID;
@@ -376,6 +410,9 @@ struct StagedDslProposal {
     ClipId musicSeedClip = INVALID_CLIP_ID;
     bool replaceMusicSeed = false;
     std::vector<AutoInstruction> automationInstructions;
+    ClipId appliedMusicClip = INVALID_CLIP_ID;
+    juce::String appliedUndoLabel;
+    juce::String appliedDelta;
     ProposalPhase phase = ProposalPhase::Ready;
 };
 
@@ -386,13 +423,64 @@ StagedDslProposal captureDslProposal(const juce::String& dsl, const juce::String
                                      bool replaceMusicSeed = false,
                                      const std::vector<AutoInstruction>& automation = {});
 juce::String applyPendingDslProposal(MagdaApi& api, bool cancelled);
+/** Empty if the text is a song action. Otherwise a Refused line; music is unchanged. */
+juce::String modelActionRefusal(const juce::String& text);
+/** Empty if named filters and track(id=N) resolve. track(name=) may create and is not missing. */
+juce::String missingDslTargetRefusal(const juce::String& dsl);
+/** Empty if ranges, internal devices, and starter audio names are supported. */
+juce::String unsupportedActionRefusal(const juce::String& dsl,
+                                      const std::vector<Instruction>& music = {});
+/** Empty if every non-empty line is a project, track, filter, or groove statement. */
+juce::String incompleteActionRefusal(const juce::String& dsl);
 const StagedDslProposal* pendingDslProposal();
+const ConductorState& conductorState();
+void setConductorView(ConductorView view);
+juce::String conductorViewName(ConductorView view);
+juce::String conductorReplyKindName(ConductorReplyKind kind);
+void captureExplanation(const juce::String& text);
+bool captureSettingsRecipe(const ConductorSettings& settings);
+juce::String applySettingsRecipe();
 /// Console uses this to remember the MIDI clip created when a proposal is applied.
 void setAppliedMusicClipObserver(std::function<void(ClipId)> observer);
 /// Console `/dsl` and the DSL panel: run now. Does not stage a proposal.
 juce::String executeManualDsl(MagdaApi& api, const juce::String& dsl);
 /** One statement after SUNROOM_DSL:. Empty if the coach text has no staged action. */
 juce::String extractCoachDsl(const juce::String& text);
+std::uint64_t beginCoachRequest();
+juce::String cancelCoachRequest();
+juce::String completeCoachRequest(std::uint64_t id, const juce::String& text);
+
+struct CoachPrompt {
+    juce::String id;
+    juce::String label;
+    bool enabled = false;
+    juce::String reason;
+};
+
+/** Host-owned context for the companion. Quoted names are data, not instructions. */
+juce::String coachContextPacket();
+std::vector<CoachPrompt> supportedCoachPrompts();
+juce::String formatSupportedCoachPrompts();
+/** One manual next step after a helpful reply. Not a claim of learning. */
+juce::String nextManualHintAfterCoach();
+
+struct ExportSongPlan {
+    bool emptyArrangement = true;
+    bool sessionOverrides = false;
+    int arrangementClips = 0;
+    int sessionClips = 0;
+    double startSeconds = 0.0;
+    double endSeconds = 0.0;
+    juce::String source;
+    juce::String destination;
+    juce::String preview;
+    juce::String refusal;
+};
+
+ExportSongPlan planExportSong(AudioEngine& engine, const juce::File& destination);
+/** Empty on success. Writes a temp file, then finalizes. Cancel leaves dest untouched. */
+juce::String runExportSong(AudioEngine& engine, const juce::File& destination, bool overwrite,
+                           bool cancel);
 
 }  // namespace sunroom
 }  // namespace magda

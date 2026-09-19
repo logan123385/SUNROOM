@@ -163,6 +163,9 @@ class Interpreter {
      * @return true on success, false on error (check getError())
      */
     bool execute(const char* dslCode);
+    int failedStatementCount() const {
+        return failedStatementCount_;
+    }
 
     const char* getError() const {
         return ctx_.error.toRawUTF8();
@@ -259,6 +262,7 @@ class Interpreter {
 
     MagdaApi& api_;
     InterpreterContext ctx_;
+    int failedStatementCount_ = 0;
 };
 
 }  // namespace magda::dsl

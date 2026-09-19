@@ -47,11 +47,16 @@ TrackId getSelectedTrack(MagdaApi& api, juce::String& err) {
 
 /** Look up an existing lane for a target, creating it if needed. */
 AutomationLaneId ensureLaneForTarget(MagdaApi& api, const AutomationTarget& target,
-                                     AutomationLaneType type = AutomationLaneType::Absolute) {
+                                     AutomationLaneType type, bool* createdLane) {
     auto& mgr = api.automation();
     auto existing = mgr.getLaneForTarget(target);
-    if (existing != INVALID_AUTOMATION_LANE_ID)
+    if (existing != INVALID_AUTOMATION_LANE_ID) {
+        if (createdLane != nullptr)
+            *createdLane = false;
         return existing;
+    }
+    if (createdLane != nullptr)
+        *createdLane = true;
     return mgr.createLane(target, type);
 }
 
@@ -102,7 +107,10 @@ AutomationClipId resolveClipId(MagdaApi& api, AutomationClipId requested, juce::
 
 /** Resolve an AutoTarget into a concrete lane id, or INVALID. */
 AutomationLaneId resolveTarget(MagdaApi& api, const AutoTarget& target, juce::String& err,
-                               AutomationLaneType createType = AutomationLaneType::Absolute) {
+                               AutomationLaneType createType = AutomationLaneType::Absolute,
+                               bool* createdLane = nullptr) {
+    if (createdLane != nullptr)
+        *createdLane = false;
     switch (target.kind) {
         case AutoTarget::Kind::LaneId: {
             auto* lane = api.automation().getLane(target.laneId);
@@ -130,7 +138,7 @@ AutomationLaneId resolveTarget(MagdaApi& api, const AutoTarget& target, juce::St
             AutomationTarget t;
             t.kind = ControlTarget::Kind::TrackVolume;
             t.devicePath = ChainNodePath::trackLevel(trackId);
-            return ensureLaneForTarget(api, t, createType);
+            return ensureLaneForTarget(api, t, createType, createdLane);
         }
         case AutoTarget::Kind::TrackPan: {
             auto trackId = getSelectedTrack(api, err);
@@ -139,7 +147,7 @@ AutomationLaneId resolveTarget(MagdaApi& api, const AutoTarget& target, juce::St
             AutomationTarget t;
             t.kind = ControlTarget::Kind::TrackPan;
             t.devicePath = ChainNodePath::trackLevel(trackId);
-            return ensureLaneForTarget(api, t, createType);
+            return ensureLaneForTarget(api, t, createType, createdLane);
         }
         case AutoTarget::Kind::Alias: {
             auto sigil = tryParse(target.aliasToken);
@@ -160,15 +168,24 @@ AutomationLaneId resolveTarget(MagdaApi& api, const AutoTarget& target, juce::St
             t.kind = ControlTarget::Kind::PluginParam;
             t.devicePath = resolved.target.devicePath;
             t.paramIndex = resolved.target.paramIndex;
-            return ensureLaneForTarget(api, t, createType);
+            return ensureLaneForTarget(api, t, createType, createdLane);
         }
     }
     err = "Unknown target kind";
     return INVALID_AUTOMATION_LANE_ID;
 }
 
+/** One undo step for the whole curve. Repeated addPoint calls are not undo history. */
+bool commitLanePoints(AutomationApi& mgr, AutomationLaneId laneId,
+                      std::vector<AutomationPoint> points, bool removeLaneOnUndo) {
+    if (points.empty())
+        return true;
+    return mgr.setLanePoints(laneId, std::move(points), removeLaneOnUndo);
+}
+
 /** Emit points into a lane for a given shape op. Values already normalized. */
-void emitShapePoints(AutomationApi& mgr, AutomationLaneId laneId, const AutoShapeOp& op) {
+bool emitShapePoints(AutomationApi& mgr, AutomationLaneId laneId, const AutoShapeOp& op,
+                     bool createdLane) {
     const double minV = clampNorm(op.minV);
     const double maxV = clampNorm(op.maxV);
     const double center = 0.5 * (minV + maxV);
@@ -176,8 +193,19 @@ void emitShapePoints(AutomationApi& mgr, AutomationLaneId laneId, const AutoShap
     const double span = op.endBeat - op.startBeat;
     const double cycles = op.cycles > 0.0 ? op.cycles : 1.0;
 
-    auto add = [&](double beat, double v) {
-        mgr.addPoint(laneId, beat, clampNorm(v), AutomationCurveType::Linear);
+    std::vector<AutomationPoint> points;
+    if (!createdLane) {
+        if (const auto* lane = mgr.getLane(laneId))
+            points = lane->absolutePoints;
+    }
+    const auto before = points.size();
+
+    auto add = [&](double beat, double v, AutomationCurveType curve = AutomationCurveType::Linear) {
+        AutomationPoint point;
+        point.beatPosition = beat;
+        point.value = clampNorm(v);
+        point.curveType = curve;
+        points.push_back(point);
     };
 
     switch (op.shape) {
@@ -211,10 +239,10 @@ void emitShapePoints(AutomationApi& mgr, AutomationLaneId laneId, const AutoShap
             for (int c = 0; c < static_cast<int>(std::round(cycles)); ++c) {
                 double cStart = op.startBeat + (c / cycles) * span;
                 double cEnd = op.startBeat + ((c + 1) / cycles) * span;
-                mgr.addPoint(laneId, cStart, minV, AutomationCurveType::Linear);
+                add(cStart, minV, AutomationCurveType::Linear);
                 // Point just before cEnd at max, then Step to next cycle.
                 double epsilon = (cEnd - cStart) * 0.001;
-                mgr.addPoint(laneId, cEnd - epsilon, maxV, AutomationCurveType::Step);
+                add(cEnd - epsilon, maxV, AutomationCurveType::Step);
             }
             // Final anchor at end
             add(op.endBeat, minV);
@@ -226,8 +254,8 @@ void emitShapePoints(AutomationApi& mgr, AutomationLaneId laneId, const AutoShap
                 double cStart = op.startBeat + (c / cycles) * span;
                 double cEnd = op.startBeat + ((c + 1) / cycles) * span;
                 double cLen = cEnd - cStart;
-                mgr.addPoint(laneId, cStart, maxV, AutomationCurveType::Step);
-                mgr.addPoint(laneId, cStart + cLen * duty, minV, AutomationCurveType::Step);
+                add(cStart, maxV, AutomationCurveType::Step);
+                add(cStart + cLen * duty, minV, AutomationCurveType::Step);
             }
             add(op.endBeat, maxV);
             break;
@@ -258,9 +286,18 @@ void emitShapePoints(AutomationApi& mgr, AutomationLaneId laneId, const AutoShap
             add(op.endBeat, op.toV);
             break;
         }
-        default:
+        case AutoShape::Freeform:
+        case AutoShape::Clear:
             break;
+        default: {
+            auto never = op.shape;
+            juce::ignoreUnused(never);
+            break;
+        }
     }
+    if (points.size() == before)
+        return true;
+    return commitLanePoints(mgr, laneId, std::move(points), createdLane);
 }
 
 }  // namespace
@@ -383,37 +420,59 @@ bool AutomationExecutor::execute(const std::vector<AutoInstruction>& instruction
                 error_ = err;
                 return false;
             }
-            mgr.clearLanePoints(laneId);
-            ++laneCount;
+            const auto* lane = mgr.getLane(laneId);
+            if (lane == nullptr || !lane->isAbsolute())
+                return fail("Automation lane is not an absolute curve");
+            if (!lane->absolutePoints.empty())
+                mgr.clearLanePoints(laneId);
+            addResult("Cleared lane.");
             continue;
         }
 
         if (std::holds_alternative<AutoFreeformOp>(inst.payload)) {
             auto& op = std::get<AutoFreeformOp>(inst.payload);
-            auto laneId = resolveTarget(api_, op.target, err);
+            bool createdLane = false;
+            auto laneId = resolveTarget(api_, op.target, err, AutomationLaneType::Absolute,
+                                        &createdLane);
             if (laneId == INVALID_AUTOMATION_LANE_ID) {
                 error_ = err;
                 return false;
             }
+            std::vector<AutomationPoint> points;
+            if (!createdLane) {
+                if (const auto* lane = mgr.getLane(laneId))
+                    points = lane->absolutePoints;
+            }
             for (const auto& p : op.points) {
-                mgr.addPoint(laneId, p.beat, clampNorm(p.value), AutomationCurveType::Linear);
+                AutomationPoint point;
+                point.beatPosition = p.beat;
+                point.value = clampNorm(p.value);
+                point.curveType = AutomationCurveType::Linear;
+                points.push_back(point);
                 ++pointCount;
             }
+            if (!commitLanePoints(mgr, laneId, std::move(points), createdLane))
+                return fail("Automation lane is not an absolute curve");
             ++laneCount;
             continue;
         }
 
         if (std::holds_alternative<AutoShapeOp>(inst.payload)) {
             auto& op = std::get<AutoShapeOp>(inst.payload);
-            auto laneId = resolveTarget(api_, op.target, err);
+            bool createdLane = false;
+            auto laneId = resolveTarget(api_, op.target, err, AutomationLaneType::Absolute,
+                                        &createdLane);
             if (laneId == INVALID_AUTOMATION_LANE_ID) {
                 error_ = err;
                 return false;
             }
             int before = 0;
-            if (auto* lane = mgr.getLane(laneId))
-                before = static_cast<int>(lane->absolutePoints.size());
-            emitShapePoints(mgr, laneId, op);
+            if (!createdLane) {
+                if (auto* lane = mgr.getLane(laneId))
+                    before = static_cast<int>(lane->absolutePoints.size());
+            }
+            if (!emitShapePoints(mgr, laneId, op, createdLane))
+                return fail("Automation lane is not an absolute curve");
             int after = 0;
             if (auto* lane = mgr.getLane(laneId))
                 after = static_cast<int>(lane->absolutePoints.size());

@@ -22,6 +22,8 @@ class AutomationApiLive : public AutomationApi {
     std::vector<AutomationLaneId> getEditScopedLanes() const override;
     const std::vector<AutomationClipInfo>& getClips() const override;
     bool setLanePoints(AutomationLaneId laneId, std::vector<AutomationPoint> points) override;
+    bool setLanePoints(AutomationLaneId laneId, std::vector<AutomationPoint> points,
+                       bool removeLaneOnUndo) override;
     bool deleteLane(AutomationLaneId laneId) override;
     bool retypeEmptyLane(AutomationLaneId laneId, AutomationLaneType type) override;
     AutomationClipId createClip(AutomationLaneId laneId, double startBeats,

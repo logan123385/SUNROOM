@@ -15,14 +15,14 @@ Reconciled 2026-09-18 against `f6b5edb`. Older “complete” labels are histori
 | P4 Instruments / notes | partial — typing, leaving the window, or losing focus releases held keyboard notes; a control still inside the window keeps them | passed 2026-09-18 (`verify_beginner_p4.py`) | not run | n/a |
 | P5 Sections / ownership | partial — playback source counts only playable tracks. Empty projects and aux returns do not claim Arrangement | passed 2026-09-18 (`verify_beginner_p5.py`) | not run | n/a |
 | P6 Mix / Shared Space | partial — Analyze opens an offline measurement modal; findings are levels and collisions, not a score. The measurement itself was not run | passed 2026-09-18 (`verify_beginner_p6.py`, including findings text) | not run — button and modal not opened | n/a |
-| P7 Proposal boundary | partial — console agent DSL, music IR, and automation IR stage until apply. Point writes are not an undo step | passed 2026-09-18 (`verify_beginner_p7.py`) | not run | not run — mocks only |
-| P8 Live coach | partial — missing-model refusal and DSL staging exist | passed 2026-09-17 (`verify_beginner_p8.py`) | not run | not run — weights not loaded |
+| P7 Proposal boundary | partial — late, canceled, save-as, renamed, and deleted-target replies are refused before apply | passed 2026-09-19 (`verify_beginner_p7.py`) | not run | mocks only; live arrival is P8 |
+| P8 Live coach | partial — missing-model refusal, supported prompts, and live local `coach-ask` exist | passed 2026-09-19 (`verify_beginner_p8.py`, including live MLX) | not run | live local MLX Qwen3.5-4B-4bit; cloud/LAN not run |
 | P9 Curated media | partial — shelf click previews through the sample browser in source; Shift-click still imports. Heard playback not proven | passed 2026-09-18 (`verify_beginner_p9.py`, including preview-sample leaving the project unchanged) | not run | n/a |
-| P10 Export | not started under this plan | not run | not run | n/a |
-| P11 Native journey | not started | not run | not run | not run |
-| P12 Handoff | not started | not run | not run | not run |
+| P10 Export | partial — CLI `export-song` is Arrangement-only with empty/cancel/overwrite gates; GUI source writes temp then finalize | passed 2026-09-19 (`verify_beginner_p10.py`) | not run — dialog and Reveal not opened | n/a |
+| P11 Native journey | not started — SUNROOM.app still 2026-09-17 | not run | not run | not run in the app |
+| P12 Handoff | docs and evidence updated; not a merge | n/a | n/a | n/a |
 
-**Next slice:** The chat panel still reads the generated clip id from execute, which no longer creates the clip. See whether apply can record that clip id. Do not start P10. Do not load a model.
+**Next slice:** Relink and run the native app for P11. Heard A/B, cloud, and LAN remain pending. Do not treat CLI PASS as native acceptance.
 
 ## Architecture reuse (non-negotiable)
 
@@ -34,3 +34,7 @@ Reconciled 2026-09-18 against `f6b5edb`. Older “complete” labels are histori
 ## SUNROOM overlap
 
 Prior SUNROOM work already delivers a guided Create path, 8-bar default, coach, and offline journey generation. P2–P3 must **reconcile** Magda Fixture A (drums/bass/chords @ 100 BPM) with SUNROOM moods without inventing a fourth composition model. Prefer additive entry (Beat/Song/Blank) that can call either recipe pipeline once both exist.
+
+## Local review description (2026-09-19)
+
+Headless P8 and P10 are implemented and verified on CLI sha256 `16da207e…e51f`. Live local MLX (`mlx-community/Qwen3.5-4B-4bit`) answered about Fixture A drums and left music unchanged. `export-song` refuses an empty Arrangement, previews Fixture B as 76.80s, and writes a playable Fixture C WAV. The installed SUNROOM.app is still the 2026-09-17 binary; returning to it needs no extra step. Cloud, LAN, heard A/B, and the native P11 journey remain pending. Not merged.

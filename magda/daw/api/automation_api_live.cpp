@@ -31,7 +31,10 @@ AutomationPointId AutomationApiLive::addPoint(AutomationLaneId laneId, double be
 }
 
 void AutomationApiLive::clearLanePoints(AutomationLaneId laneId) {
-    AutomationManager::getInstance().clearLanePoints(laneId);
+    const auto* lane = AutomationManager::getInstance().getLane(laneId);
+    if (lane == nullptr || !lane->isAbsolute() || lane->absolutePoints.empty())
+        return;
+    setLanePoints(laneId, {}, false);
 }
 
 const std::vector<AutomationLaneInfo>& AutomationApiLive::getLanes() const {
@@ -52,11 +55,17 @@ const std::vector<AutomationClipInfo>& AutomationApiLive::getClips() const {
 
 bool AutomationApiLive::setLanePoints(AutomationLaneId laneId,
                                       std::vector<AutomationPoint> points) {
+    return setLanePoints(laneId, std::move(points), false);
+}
+
+bool AutomationApiLive::setLanePoints(AutomationLaneId laneId, std::vector<AutomationPoint> points,
+                                      bool removeLaneOnUndo) {
     const auto* lane = AutomationManager::getInstance().getLane(laneId);
     if (lane == nullptr || !lane->isAbsolute())
         return false;
 
-    auto command = std::make_unique<SetAutomationLanePointsCommand>(laneId, std::move(points));
+    auto command = std::make_unique<SetAutomationLanePointsCommand>(laneId, std::move(points),
+                                                                    removeLaneOnUndo);
     auto* raw = command.get();
     UndoManager::getInstance().executeCommand(std::move(command));
     return raw->didApply();

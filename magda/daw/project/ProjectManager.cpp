@@ -133,6 +133,10 @@ void ProjectManager::invalidatePendingProjectCommit() {
     ++mutationRevision_;
 }
 
+void ProjectManager::beginProjectSession() {
+    ++projectSessionId_;
+}
+
 // ============================================================================
 // Project Lifecycle
 // ============================================================================
@@ -144,6 +148,7 @@ bool ProjectManager::newProject() {
     }
 
     invalidatePendingProjectCommit();
+    beginProjectSession();
 
     resetTransportForProjectBoundary();
 
@@ -323,6 +328,7 @@ bool ProjectManager::loadProject(const juce::File& file,
     currentProject_.filePath = file.getFullPathName();
     currentFile_ = file;
     isProjectOpen_ = true;
+    beginProjectSession();
 
     // Set media directory beside project file
     juce::String mediaDirName = file.getFileNameWithoutExtension() + "_Media";
@@ -427,6 +433,7 @@ void ProjectManager::importDawProjectAsync(
                         currentProject_.filePath = {};
                         currentFile_ = juce::File();
                         isProjectOpen_ = true;
+                        beginProjectSession();
 
                         // An import has never been saved as a .mgd, so it starts dirty
                         // — but the previous project's undo stack still has to go.
@@ -519,6 +526,7 @@ void ProjectManager::loadProjectAsync(const juce::File& file,
                 currentProject_.filePath = originalFile.getFullPathName();
                 currentFile_ = originalFile;
                 isProjectOpen_ = true;
+                beginProjectSession();
 
                 // Set media directory beside project file
                 juce::String mediaDirName = originalFile.getFileNameWithoutExtension() + "_Media";
@@ -552,6 +560,7 @@ bool ProjectManager::closeProject() {
     }
 
     invalidatePendingProjectCommit();
+    beginProjectSession();
 
     deleteAutosaveFile();
 

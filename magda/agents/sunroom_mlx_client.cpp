@@ -419,6 +419,12 @@ juce::String SunroomMlxClient::localModelStatus() {
         !juce::File(model).getChildFile("config.json").existsAsFile())
         return "The local AI model is not installed. Run Setup AI.command in the SUNROOM folder. "
                "Offline Create and Play still works. This is not an AI answer.";
-    return "Local model files are present. This check did not load weights or call a server.";
+    juce::String line = "Local model files are present.";
+    if (const auto modelId = config["model_id"].toString(); modelId.isNotEmpty())
+        line += " model " + modelId;
+    if (const auto revision = config["revision"].toString(); revision.isNotEmpty())
+        line += " revision " + revision;
+    line += " This check did not load weights or call a server.";
+    return line;
 }
 }  // namespace magda

@@ -30,6 +30,19 @@ Prior P1–P9 “PASS” lines below are historical CLI runs. They are not nativ
 | P5 playback source | passed headless | `python3 scripts/verify_beginner_p5.py` on CLI sha256 `107c1788…93f3`: empty and aux say none; audio plus aux says Arrangement; session plus arrangement says mixed. Not shown on screen. |
 | P6 Analyze findings | passed headless | `python3 scripts/verify_beginner_p6.py` on CLI sha256 `53cbc75e…663f`: levels, peak, and one collision; `has-score no`. Button opens the offline modal in source. Modal not opened. Measurement not run. |
 | P7 remote pulse undo | passed headless | `python3 scripts/verify_beginner_p7.py` on CLI sha256 `779966f5…0d6e`: tempo 90.0 then `Undid: Set project tempo`; signature 7/8 then `Undid: Set time signature`, restored to the saved 4/4. Same run also staged automation: points 0 until apply. No model loaded. Point writes are not an undo step. |
+| P7 applied clip id | passed headless | `python3 scripts/verify_beginner_p7.py` on CLI sha256 `c295cbb1…fb6e`: staged note printed `clips 0` before `Applied:`, then `clip 1`. No model loaded. Chat panel not opened. Point writes are not an undo step. |
+| P7 automation curve undo | passed headless | `python3 scripts/verify_beginner_p7.py` on CLI sha256 `cec2d3ca…0e94`: staged line `points 0` before `Applied: Wrote 2 points`, then `Undid: Apply suggestion` and `points 0`. No model loaded. Lane clear is still not an undo step. |
+| P7 suggestion undo name | passed headless | `python3 scripts/verify_beginner_p7.py` on CLI sha256 `1e9ba87d…0aa2`: `Undid: Apply suggestion 2: track volume` then `Undid: Apply suggestion 1: project.set(bpm=90)`. No model loaded. Hear before was not clicked. |
+| P7 suggestion delta | passed headless | `python3 scripts/verify_beginner_p7.py` on CLI sha256 `2c923d78…430e`: `delta tempo 84.0 -> 90.0` and `delta points 0 -> 2`. No model loaded. Hear before was not clicked. Lane clear is still not an undo step. |
+| P7 automation clear undo | passed headless | `python3 scripts/verify_beginner_p7.py` on CLI sha256 `5c82d754…e893`: clear apply printed `Cleared lane.` and `delta points 2 -> 0`, then `Undid: Apply suggestion 2: clear track volume` restored `points 2`. No model loaded. |
+| P7 conductor views | passed headless | `python3 scripts/verify_beginner_p7.py` on CLI sha256 `4eec3346…94f8`: same `conversation` and `proposal-id` through create/session/arrange/mix; `new-project` printed `proposal no`. No model loaded. Views not opened. |
+| P7 settings-only recipe | passed headless | `python3 scripts/verify_beginner_p7.py` on CLI sha256 `4b27c01e…584f`: explanation then settings apply printed `Settings applied. No tracks were created.`, `tracks 0`, blank tempo unchanged. No model loaded. |
+| P7 model reply prevalidate | passed headless | `python3 scripts/verify_beginner_p7.py` on CLI sha256 `84731488…9e6a`: `system("echo hi")` printed `Refused: shell or code` and `proposal no`; missing filter name and `track(id=99)` refused; blank dump unchanged. No model loaded. |
+| P7 range device asset | passed headless | `python3 scripts/verify_beginner_p7.py` on CLI sha256 `54a12ed2…7e03`: `bpm=2000` printed `supported range`; `NotADevice` printed `device is not supported` with no Lead track; `GhostTake.wav` printed `sound was not found` with no Sound track. No model loaded. |
+| P7 multi-action prevalidate | passed headless | `python3 scripts/verify_beginner_p7.py` on CLI sha256 `e4947743…eba3`: two `SUNROOM_DSL` lines with `bpm=90` then `NotADevice` printed `device is not supported`, tempo unchanged, no Lead; a prose second step printed `one step is not a song action`. P8 still PASS. No model loaded. |
+| P7 late canceled apply | passed headless | `python3 scripts/verify_beginner_p7.py` on CLI sha256 `bd478a0e…e937`: late request 1 after request 2 refused; canceled arrive refused; save-as then apply refused; rename and delete of Ghost refused. No model loaded. |
+| P8 live local coach | passed headless | `python3 scripts/verify_beginner_p8.py` on CLI sha256 `16da207e…e51f`: isolated profile not installed; live `this-mac-mlx` Qwen3.5-4B-4bit 63.98s explained drums notes 24/25/26; cancel refused staging. No `sk-`. GUI A/B not run. |
+| P10 export song | passed headless | `python3 scripts/verify_beginner_p10.py` on the same CLI: empty refused; Fixture B preview 76.80s; Fixture C stereo 44100 WAV not silent; overwrite/cancel/unwritable. Dialog not opened. |
 
 ## P9 curated media gate (ran 2026-09-18)
 
@@ -52,7 +65,27 @@ python3 scripts/verify_beginner_p9.py
 
 Evidence: `artifacts/beginner-p9/result.json`
 
-## P8 coach gate (ran 2026-09-17)
+## P10 export gate (ran 2026-09-19)
+
+Command:
+
+```bash
+python3 scripts/verify_beginner_p10.py
+```
+
+| Scenario | Status | Evidence |
+|---|---|---|
+| Empty arrangement | pass | `Refused: the arrangement is empty`; `empty.wav` not created |
+| Fixture B duration | pass | preview `duration 76.80s` at 100 BPM; file not written |
+| Fixture C Arrangement export | pass | stereo 44100 WAV, duration 18.5–20.5s, peak above silence |
+| Overwrite | pass | existing bytes kept without `--overwrite`; RIFF after `--overwrite` |
+| Cancel | pass | destination bytes unchanged; no leftover `.part` |
+| Unwritable dest | pass | file-as-folder path refused |
+| GUI dialog / Reveal / Open | **not run** | CLI printed `reveal <path>` only |
+
+Evidence: `artifacts/beginner-p10/result.json`
+
+## P8 coach gate (refreshed 2026-09-19)
 
 Command:
 
@@ -62,13 +95,16 @@ python3 scripts/verify_beginner_p8.py
 
 | Scenario | Status | Evidence |
 |---|---|---|
-| Missing local model | pass | "not installed" and "not an AI answer"; no API key text |
+| Missing local model | pass | isolated `MAGDA_DATA_DIR` says "not installed" and "not an AI answer"; no `sk-` |
 | Prose without SUNROOM_DSL | pass | refused; no save |
 | SUNROOM_DSL then apply-proposal | pass | real interpreter; Applied |
-| Live model / weights | **not run** | status check does not start the worker |
+| Live files present | pass | copied `sunroom-ai.json`; `mlx-community/Qwen3.5-4B-4bit` revision `0e7ffd5c…` |
+| Live local ask | pass | provider `this-mac-mlx`; latency 63.98s; named Fixture A / Drums notes 24/25/26; `Coach answered. Music is unchanged.` |
+| Live cancel | pass | host printed `Refused: coach result canceled`; no proposal staged |
+| Cloud / LAN | **not run** | no key entered; no mini PC |
 | GUI audible before/after | **not run** | Hear before/after is undo/redo of "Apply suggestion" only |
 
-Evidence: `artifacts/beginner-p8/result.json`
+Evidence: `artifacts/beginner-p8/result.json` and `08-live-ask.log`. The model also invented a **Fix** button that does not exist; that is model wording, not a product control.
 
 ## P7 staged DSL gate (ran 2026-09-17)
 

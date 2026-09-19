@@ -10,6 +10,7 @@
 #include <memory>
 #include <optional>
 #include <sstream>
+#include <thread>
 #include <vector>
 
 #include "api/automation_api.hpp"
@@ -32,6 +33,8 @@
 #include "core/RackInfo.hpp"
 #include "core/SelectionManager.hpp"
 #include "core/UndoManager.hpp"
+#include "core/ViewModeController.hpp"
+#include "core/ViewModeState.hpp"
 #include "audio/session/SessionRecorder.hpp"
 #include "engine/TracktionEngineWrapper.hpp"
 #include "sunroom/MusicTheory.hpp"
@@ -251,11 +254,35 @@ class CommandDispatcher {
              &CommandDispatcher::agentMusicStage},
             {"agent-automation-stage", "agent-automation-stage",
              &CommandDispatcher::agentAutomationStage},
+            {"agent-automation-clear", "agent-automation-clear",
+             &CommandDispatcher::agentAutomationClear},
+            {"agent-note-stage", "agent-note-stage", &CommandDispatcher::agentNoteStage},
             {"apply-proposal", "apply-proposal [cancelled]", &CommandDispatcher::applyProposal},
+            {"conductor-view", "conductor-view <create|session|arrange|mix>",
+             &CommandDispatcher::conductorView},
+            {"conductor-status", "conductor-status", &CommandDispatcher::conductorStatus},
+            {"coach-explain", "coach-explain <text>", &CommandDispatcher::coachExplain},
+            {"settings-recipe", "settings-recipe <mood> <root> <tempo> <bars>",
+             &CommandDispatcher::settingsRecipe},
+            {"apply-settings", "apply-settings", &CommandDispatcher::applySettings},
+            {"new-project", "new-project", &CommandDispatcher::newProject},
             {"select-track", "select-track <track-id>", &CommandDispatcher::selectTrack},
+            {"select-named-clip", "select-named-clip <name>", &CommandDispatcher::selectNamedClip},
             {"bump-revision", "bump-revision", &CommandDispatcher::bumpRevision},
             {"coach-status", "coach-status", &CommandDispatcher::coachStatus},
+            {"coach-prompts", "coach-prompts", &CommandDispatcher::coachPrompts},
+            {"coach-ask", "coach-ask <text> [--cancel-ms N]", &CommandDispatcher::coachAsk},
             {"coach-stage", "coach-stage <text>", &CommandDispatcher::coachStage},
+            {"coach-begin", "coach-begin", &CommandDispatcher::coachBegin},
+            {"coach-cancel", "coach-cancel", &CommandDispatcher::coachCancel},
+            {"coach-arrive", "coach-arrive <request-id> <text>", &CommandDispatcher::coachArrive},
+            {"export-song", "export-song <out.wav> [overwrite|cancel|preview]",
+             &CommandDispatcher::exportSong},
+            {"save-as", "save-as <out.mgd>", &CommandDispatcher::saveAsProject},
+            {"rename-track", "rename-track <old-name> <new-name>",
+             &CommandDispatcher::renameNamedTrack},
+            {"delete-named-track", "delete-named-track <name>",
+             &CommandDispatcher::deleteNamedTrack},
             {"library-query",
              "library-query <kind|-> <text|-> <key|-> <bpmMin|-> <bpmMax|->",
              &CommandDispatcher::libraryQuery},
@@ -557,6 +584,12 @@ class CommandDispatcher {
             return fail("propose-dsl requires <dsl>");
         const auto dsl = args[static_cast<int>(index++)];
         const auto proposal = magda::sunroom::captureDslProposal(dsl, "mocked specialist");
+        if (proposal.id == 0) {
+            const auto why = proposal.explanation.isNotEmpty()
+                                 ? proposal.explanation
+                                 : juce::String("Refused: proposal was not staged. Music is unchanged.");
+            return fail(why);
+        }
         std::cout << "Proposal " << static_cast<unsigned long long>(proposal.id) << " revision "
                   << static_cast<unsigned long long>(proposal.mutationRevision) << "\n";
         return {};
@@ -588,6 +621,8 @@ class CommandDispatcher {
         std::cout << execution.response << "\n";
         std::cout << "proposal " << (magda::sunroom::pendingDslProposal() != nullptr ? "yes" : "no")
                   << "\n";
+        if (juce::String(execution.response).startsWith("Refused:"))
+            return fail(execution.response);
         std::cout << "tempo " << juce::String(tempo, 1) << "\n";
         return {};
     }
@@ -645,6 +680,53 @@ class CommandDispatcher {
         return {};
     }
 
+    CommandResult agentAutomationClear(const juce::StringArray&, size_t&) {
+        magda::AutoClearOp clear;
+        clear.target.kind = magda::AutoTarget::Kind::TrackVolume;
+        magda::AutoInstruction instruction;
+        instruction.payload = clear;
+        magda::agent::ConsoleRunOutput output;
+        output.automationInstructions.push_back(instruction);
+        magda::agent::ConsoleAgentResultExecutor executor(engine_.getMagdaApi());
+        const auto execution = executor.execute(std::move(output));
+        int points = 0;
+        const auto trackId = magda::SelectionManager::getInstance().getSelectedTrack();
+        if (trackId != magda::INVALID_TRACK_ID) {
+            auto& automation = engine_.getMagdaApi().automation();
+            for (const auto laneId : automation.getLanesForTrack(trackId)) {
+                if (const auto* lane = automation.getLane(laneId))
+                    points += static_cast<int>(lane->absolutePoints.size());
+            }
+        }
+        std::cout << execution.response << "\n";
+        std::cout << "proposal " << (magda::sunroom::pendingDslProposal() != nullptr ? "yes" : "no")
+                  << "\n";
+        std::cout << "points " << points << "\n";
+        return {};
+    }
+
+    CommandResult agentNoteStage(const juce::StringArray&, size_t&) {
+        magda::NoteOp note;
+        note.pitch = "C4";
+        note.beat = 0.0;
+        note.length = 1.0;
+        magda::Instruction instruction;
+        instruction.opcode = magda::OpCode::Note;
+        instruction.payload = note;
+        magda::agent::ConsoleRunOutput output;
+        output.musicInstructions.push_back(instruction);
+        magda::agent::ConsoleAgentResultExecutor executor(engine_.getMagdaApi());
+        const auto execution = executor.execute(std::move(output));
+        int clips = 0;
+        for (const auto& track : engine_.getMagdaApi().tracks().getTracks())
+            clips += static_cast<int>(engine_.getMagdaApi().clips().getClipsOnTrack(track.id).size());
+        std::cout << execution.response << "\n";
+        std::cout << "proposal " << (magda::sunroom::pendingDslProposal() != nullptr ? "yes" : "no")
+                  << "\n";
+        std::cout << "clips " << clips << "\n";
+        return {};
+    }
+
     CommandResult applyProposal(const juce::StringArray& args, size_t& index) {
         bool cancelled = false;
         if (index < static_cast<size_t>(args.size()) && args[static_cast<int>(index)] == "cancelled") {
@@ -655,6 +737,140 @@ class CommandDispatcher {
         if (line.startsWith("Refused"))
             return fail(line);
         std::cout << line << "\n";
+        const auto* pending = magda::sunroom::pendingDslProposal();
+        if (pending != nullptr && pending->appliedMusicClip != magda::INVALID_CLIP_ID)
+            std::cout << "clip " << static_cast<int>(pending->appliedMusicClip) << "\n";
+        else
+            std::cout << "clip none\n";
+        if (pending != nullptr && pending->appliedDelta.isNotEmpty()) {
+            for (const auto& part : juce::StringArray::fromLines(pending->appliedDelta)) {
+                if (part.isNotEmpty())
+                    std::cout << "delta " << part << "\n";
+            }
+        } else {
+            std::cout << "delta none\n";
+        }
+        return {};
+    }
+
+    CommandResult conductorView(const juce::StringArray& args, size_t& index) {
+        if (index >= static_cast<size_t>(args.size()))
+            return fail("conductor-view requires <create|session|arrange|mix>");
+        const auto name = args[static_cast<int>(index++)];
+        magda::sunroom::ConductorView view = magda::sunroom::ConductorView::Create;
+        if (name == "create") {
+            view = magda::sunroom::ConductorView::Create;
+        } else if (name == "session") {
+            view = magda::sunroom::ConductorView::Session;
+            magda::ViewModeController::getInstance().setViewMode(magda::ViewMode::Live);
+        } else if (name == "arrange") {
+            view = magda::sunroom::ConductorView::Arrange;
+            magda::ViewModeController::getInstance().setViewMode(magda::ViewMode::Arrange);
+        } else if (name == "mix") {
+            view = magda::sunroom::ConductorView::Mix;
+            magda::ViewModeController::getInstance().setViewMode(magda::ViewMode::Mix);
+        } else {
+            return fail("conductor-view requires <create|session|arrange|mix>");
+        }
+        magda::sunroom::setConductorView(view);
+        std::cout << "view " << magda::sunroom::conductorViewName(view) << "\n";
+        return {};
+    }
+
+    CommandResult conductorStatus(const juce::StringArray&, size_t&) {
+        const auto& conductor = magda::sunroom::conductorState();
+        const auto* pending = magda::sunroom::pendingDslProposal();
+        std::cout << "session " << static_cast<unsigned long long>(conductor.projectSessionId)
+                  << "\n";
+        std::cout << "conversation " << conductor.conversationId << "\n";
+        std::cout << "view " << magda::sunroom::conductorViewName(conductor.view) << "\n";
+        std::cout << "proposal " << (pending != nullptr ? "yes" : "no") << "\n";
+        std::cout << "proposal-id "
+                  << (pending != nullptr ? static_cast<unsigned long long>(pending->id) : 0)
+                  << "\n";
+        std::cout << "plan " << (conductor.plan.isNotEmpty() ? conductor.plan : juce::String("none"))
+                  << "\n";
+        std::cout << "provider " << conductor.provider << "\n";
+        std::cout << "model " << conductor.model << "\n";
+        std::cout << "request " << static_cast<unsigned long long>(conductor.requestId) << "\n";
+        std::cout << "coach-request "
+                  << static_cast<unsigned long long>(conductor.coachRequestId) << "\n";
+        std::cout << "coach-flight " << (conductor.coachInFlight ? "yes" : "no") << "\n";
+        std::cout << "kind " << magda::sunroom::conductorReplyKindName(conductor.replyKind) << "\n";
+        std::cout << "settings "
+                  << (conductor.settingsApplied ? "applied"
+                      : conductor.settingsPending ? "pending"
+                                                 : "no")
+                  << "\n";
+        if (conductor.settingsPending || conductor.settingsApplied)
+            std::cout << "settings-tempo " << juce::String(conductor.settings.tempo, 1) << "\n";
+        return {};
+    }
+
+    CommandResult coachExplain(const juce::StringArray& args, size_t& index) {
+        if (index >= static_cast<size_t>(args.size()))
+            return fail("coach-explain requires <text>");
+        magda::sunroom::captureExplanation(args[static_cast<int>(index++)]);
+        const auto& conductor = magda::sunroom::conductorState();
+        std::cout << "kind " << magda::sunroom::conductorReplyKindName(conductor.replyKind) << "\n";
+        std::cout << "proposal "
+                  << (magda::sunroom::pendingDslProposal() != nullptr ? "yes" : "no") << "\n";
+        return {};
+    }
+
+    CommandResult settingsRecipe(const juce::StringArray& args, size_t& index) {
+        if (index + 3 >= static_cast<size_t>(args.size()))
+            return fail("settings-recipe requires <mood> <root> <tempo> <bars>");
+        auto mood = parseInt(args[static_cast<int>(index++)]);
+        auto root = parseInt(args[static_cast<int>(index++)]);
+        auto tempo = parseDouble(args[static_cast<int>(index++)]);
+        auto bars = parseInt(args[static_cast<int>(index++)]);
+        if (!mood || !root || !tempo || !bars)
+            return fail("settings-recipe requires <mood> <root> <tempo> <bars>");
+        magda::sunroom::ConductorSettings settings;
+        settings.mood = *mood;
+        settings.root = *root;
+        settings.tempo = *tempo;
+        settings.bars = *bars;
+        if (!magda::sunroom::captureSettingsRecipe(settings))
+            return fail("settings-recipe refused: a song edit is staged");
+        int tracks = 0;
+        for (const auto& track : engine_.getMagdaApi().tracks().getTracks()) {
+            juce::ignoreUnused(track);
+            ++tracks;
+        }
+        std::cout << "kind settings\n";
+        std::cout << "proposal "
+                  << (magda::sunroom::pendingDslProposal() != nullptr ? "yes" : "no") << "\n";
+        std::cout << "tracks " << tracks << "\n";
+        return {};
+    }
+
+    CommandResult applySettings(const juce::StringArray&, size_t&) {
+        const auto line = magda::sunroom::applySettingsRecipe();
+        if (line.startsWith("Refused"))
+            return fail(line);
+        int tracks = 0;
+        for (const auto& track : engine_.getMagdaApi().tracks().getTracks()) {
+            juce::ignoreUnused(track);
+            ++tracks;
+        }
+        std::cout << line << "\n";
+        std::cout << "proposal "
+                  << (magda::sunroom::pendingDslProposal() != nullptr ? "yes" : "no") << "\n";
+        std::cout << "tracks " << tracks << "\n";
+        const auto& conductor = magda::sunroom::conductorState();
+        std::cout << "settings-tempo " << juce::String(conductor.settings.tempo, 1) << "\n";
+        return {};
+    }
+
+    CommandResult newProject(const juce::StringArray&, size_t&) {
+        if (!magda::ProjectManager::getInstance().newProject())
+            return fail("new-project failed");
+        std::cout << "session "
+                  << static_cast<unsigned long long>(
+                         magda::ProjectManager::getInstance().projectSessionId())
+                  << "\n";
         return {};
     }
 
@@ -670,6 +886,24 @@ class CommandDispatcher {
         return {};
     }
 
+    CommandResult selectNamedClip(const juce::StringArray& args, size_t& index) {
+        if (index >= static_cast<size_t>(args.size()))
+            return fail("select-named-clip requires <name>");
+        const auto name = args[static_cast<int>(index++)];
+        const magda::ClipInfo* found = nullptr;
+        for (const auto& clip : magda::ClipManager::getInstance().getClips()) {
+            if (clip.name == name || clip.name.contains(name)) {
+                found = &clip;
+                break;
+            }
+        }
+        if (found == nullptr)
+            return fail("select-named-clip: no clip named " + name);
+        magda::SelectionManager::getInstance().selectClip(found->id);
+        std::cout << "Selected clip " << found->id << " " << found->name << "\n";
+        return {};
+    }
+
     CommandResult bumpRevision(const juce::StringArray&, size_t&) {
         magda::ProjectManager::getInstance().markDirty();
         std::cout << "Revision " << static_cast<unsigned long long>(
@@ -680,6 +914,106 @@ class CommandDispatcher {
 
     CommandResult coachStatus(const juce::StringArray&, size_t&) {
         std::cout << magda::SunroomMlxClient::localModelStatus() << "\n";
+        std::cout << magda::sunroom::formatSupportedCoachPrompts();
+        return {};
+    }
+
+    CommandResult coachPrompts(const juce::StringArray&, size_t&) {
+        std::cout << magda::sunroom::formatSupportedCoachPrompts();
+        return {};
+    }
+
+    CommandResult coachAsk(const juce::StringArray& args, size_t& index) {
+        int cancelMs = 0;
+        juce::StringArray words;
+        while (index < static_cast<size_t>(args.size())) {
+            const auto token = args[static_cast<int>(index)];
+            if (token == "--cancel-ms") {
+                ++index;
+                if (index >= static_cast<size_t>(args.size()))
+                    return fail("coach-ask --cancel-ms requires <ms>");
+                auto ms = parseInt(args[static_cast<int>(index++)]);
+                if (!ms || *ms < 0)
+                    return fail("coach-ask --cancel-ms requires <ms>");
+                cancelMs = *ms;
+                continue;
+            }
+            words.add(token);
+            ++index;
+        }
+        if (words.isEmpty())
+            return fail("coach-ask requires <text>");
+        const auto question = words.joinIntoString(" ");
+        const auto readiness = magda::SunroomMlxClient::localModelStatus();
+        std::cout << readiness << "\n";
+        if (readiness.contains("not installed"))
+            return fail(readiness);
+        std::cout << "provider this-mac-mlx\n";
+        const auto requestId = magda::sunroom::beginCoachRequest();
+        std::cout << "request " << static_cast<unsigned long long>(requestId) << "\n";
+        std::thread cancelThread;
+        if (cancelMs > 0) {
+            cancelThread = std::thread([cancelMs] {
+                juce::Thread::sleep(cancelMs);
+                magda::sunroom::cancelCoachRequest();
+                magda::SunroomMlxClient::cancelCoachRequests();
+            });
+        }
+        const auto result =
+            magda::SunroomMlxClient::coach(question, magda::sunroom::coachContextPacket(), 1, {}, {});
+        if (cancelThread.joinable())
+            cancelThread.join();
+        std::cout << "latency " << juce::String(result.wallSeconds, 2) << "\n";
+        const auto arrival = magda::sunroom::completeCoachRequest(
+            requestId, result.success ? result.text : juce::String());
+        if (!result.success)
+            std::cout << "error " << result.error << "\n";
+        else
+            std::cout << "answer " << result.text.replaceCharacter('\n', ' ') << "\n";
+        std::cout << arrival << "\n";
+        std::cout << "proposal "
+                  << (magda::sunroom::pendingDslProposal() != nullptr ? "yes" : "no") << "\n";
+        if (!arrival.startsWith("Refused"))
+            std::cout << "next-manual " << magda::sunroom::nextManualHintAfterCoach() << "\n";
+        magda::SunroomMlxClient::shutdown();
+        if (arrival.startsWith("Refused"))
+            return fail(arrival);
+        if (!result.success)
+            return fail(result.error);
+        return {};
+    }
+
+    CommandResult exportSong(const juce::StringArray& args, size_t& index) {
+        if (index >= static_cast<size_t>(args.size()))
+            return fail("export-song requires <out.wav>");
+        const auto dest = fileFromArg(args[static_cast<int>(index++)]);
+        bool overwrite = false;
+        bool cancel = false;
+        bool previewOnly = false;
+        while (index < static_cast<size_t>(args.size())) {
+            const auto flag = args[static_cast<int>(index)];
+            if (flag == "overwrite" || flag == "--overwrite") {
+                overwrite = true;
+                ++index;
+            } else if (flag == "cancel" || flag == "--cancel") {
+                cancel = true;
+                ++index;
+            } else if (flag == "preview" || flag == "--preview") {
+                previewOnly = true;
+                ++index;
+            } else {
+                break;
+            }
+        }
+        const auto plan = magda::sunroom::planExportSong(engine_, dest);
+        std::cout << plan.preview << "\n";
+        if (previewOnly)
+            return plan.refusal.isEmpty() ? CommandResult{} : fail(plan.refusal);
+        const auto error = magda::sunroom::runExportSong(engine_, dest, overwrite, cancel);
+        if (error.isNotEmpty())
+            return fail(error);
+        std::cout << "Exported " << dest.getFullPathName() << "\n";
+        std::cout << "reveal " << dest.getFullPathName() << "\n";
         return {};
     }
 
@@ -687,12 +1021,125 @@ class CommandDispatcher {
         if (index >= static_cast<size_t>(args.size()))
             return fail("coach-stage requires <text>");
         const auto text = args[static_cast<int>(index++)];
+        if (const auto why = magda::sunroom::modelActionRefusal(text); why.isNotEmpty()) {
+            std::cout << "proposal no\n";
+            return fail(why);
+        }
         const auto dsl = magda::sunroom::extractCoachDsl(text);
-        if (dsl.isEmpty())
+        if (dsl.isEmpty()) {
+            if (text.contains("SUNROOM_DSL:")) {
+                std::cout << "proposal no\n";
+                return fail("Refused: one step is not a song action. Music is unchanged.");
+            }
             return fail("Refused: coach text has no SUNROOM_DSL action. Music is unchanged.");
+        }
+        if (const auto why = magda::sunroom::missingDslTargetRefusal(dsl); why.isNotEmpty()) {
+            std::cout << "proposal no\n";
+            return fail(why);
+        }
+        if (const auto why = magda::sunroom::unsupportedActionRefusal(dsl); why.isNotEmpty()) {
+            std::cout << "proposal no\n";
+            return fail(why);
+        }
+        if (const auto why = magda::sunroom::incompleteActionRefusal(dsl); why.isNotEmpty()) {
+            std::cout << "proposal no\n";
+            return fail(why);
+        }
         const auto proposal = magda::sunroom::captureDslProposal(
             dsl, "Staged from coach text. Not applied until apply-proposal.");
+        if (proposal.id == 0) {
+            const auto why = proposal.explanation.isNotEmpty()
+                                 ? proposal.explanation
+                                 : juce::String("Refused: proposal was not staged. Music is unchanged.");
+            return fail(why);
+        }
         std::cout << "Staged " << static_cast<unsigned long long>(proposal.id) << " " << dsl << "\n";
+        return {};
+    }
+
+    CommandResult coachBegin(const juce::StringArray&, size_t&) {
+        const auto id = magda::sunroom::beginCoachRequest();
+        std::cout << "request " << static_cast<unsigned long long>(id) << "\n";
+        return {};
+    }
+
+    CommandResult coachCancel(const juce::StringArray&, size_t&) {
+        const auto line = magda::sunroom::cancelCoachRequest();
+        if (line.startsWith("Refused"))
+            return fail(line);
+        std::cout << line << "\n";
+        std::cout << "proposal " << (magda::sunroom::pendingDslProposal() != nullptr ? "yes" : "no")
+                  << "\n";
+        return {};
+    }
+
+    CommandResult coachArrive(const juce::StringArray& args, size_t& index) {
+        if (index + 1 >= static_cast<size_t>(args.size()))
+            return fail("coach-arrive requires <request-id> <text>");
+        auto id = parseInt(args[static_cast<int>(index)]);
+        if (!id) {
+            return fail("coach-arrive requires <request-id> <text>");
+        }
+        ++index;
+        const auto text = args[static_cast<int>(index++)];
+        const auto line = magda::sunroom::completeCoachRequest(static_cast<std::uint64_t>(*id), text);
+        std::cout << line << "\n";
+        std::cout << "proposal " << (magda::sunroom::pendingDslProposal() != nullptr ? "yes" : "no")
+                  << "\n";
+        if (line.startsWith("Refused"))
+            return fail(line);
+        return {};
+    }
+
+    CommandResult saveAsProject(const juce::StringArray& args, size_t& index) {
+        if (index >= static_cast<size_t>(args.size()))
+            return fail("save-as requires <out.mgd>");
+        const auto file = fileFromArg(args[static_cast<int>(index++)]);
+        if (!magda::ProjectManager::getInstance().saveProjectAs(file)) {
+            const auto why = magda::ProjectManager::getInstance().getLastError();
+            return fail(why.isNotEmpty() ? why : juce::String("save-as failed"));
+        }
+        std::cout << "Saved " << magda::ProjectManager::getInstance()
+                                      .getCurrentProjectFile()
+                                      .getFullPathName()
+                  << "\n";
+        return {};
+    }
+
+    CommandResult renameNamedTrack(const juce::StringArray& args, size_t& index) {
+        if (index + 1 >= static_cast<size_t>(args.size()))
+            return fail("rename-track requires <old-name> <new-name>");
+        const auto oldName = args[static_cast<int>(index++)];
+        const auto newName = args[static_cast<int>(index++)];
+        magda::TrackId found = magda::INVALID_TRACK_ID;
+        for (const auto& track : magda::TrackManager::getInstance().getTracks()) {
+            if (track.name == oldName) {
+                found = track.id;
+                break;
+            }
+        }
+        if (found == magda::INVALID_TRACK_ID)
+            return fail("Track not found: " + oldName);
+        magda::TrackManager::getInstance().setTrackName(found, newName);
+        std::cout << "renamed " << oldName << " " << newName << "\n";
+        return {};
+    }
+
+    CommandResult deleteNamedTrack(const juce::StringArray& args, size_t& index) {
+        if (index >= static_cast<size_t>(args.size()))
+            return fail("delete-named-track requires <name>");
+        const auto name = args[static_cast<int>(index++)];
+        magda::TrackId found = magda::INVALID_TRACK_ID;
+        for (const auto& track : magda::TrackManager::getInstance().getTracks()) {
+            if (track.name == name) {
+                found = track.id;
+                break;
+            }
+        }
+        if (found == magda::INVALID_TRACK_ID)
+            return fail("Track not found: " + name);
+        magda::TrackManager::getInstance().deleteTrack(found);
+        std::cout << "deleted " << name << "\n";
         return {};
     }
 
@@ -1426,6 +1873,7 @@ void printUsage(std::ostream& out) {
         << "  magda-cli run <project.mgd> --cmds <cmds.txt> [--out <out.mgd>] [--dump-json]\n"
         << "  magda-cli exec <project.mgd> <commands...> [--out <out.mgd>] [--dump-json]\n"
         << "  magda-cli render <project.mgd> --wav <out.wav> [--from <time>] [--to <time>]\n"
+        << "  magda-cli export-song <project.mgd> --wav <out.wav> [--overwrite|--cancel|--preview]\n"
         << "  magda-cli keyboard-play-focus\n"
         << "  magda-cli scale-lock-insert\n"
         << "  magda-cli keyboard-note-release\n"
@@ -1803,6 +2251,63 @@ int renderProject(const juce::StringArray& args) {
     return renderWav(session.engine(), options) ? 0 : 1;
 }
 
+int exportSongProject(const juce::StringArray& args) {
+    if (args.size() < 4) {
+        printUsage(std::cerr);
+        return 2;
+    }
+
+    const auto input = fileFromArg(args[1]);
+    juce::File wavOutput;
+    bool overwrite = false;
+    bool cancel = false;
+    bool previewOnly = false;
+    for (int i = 2; i < args.size(); ++i) {
+        if (args[i] == "--wav") {
+            if (++i >= args.size()) {
+                std::cerr << "export-song requires --wav <out.wav>\n";
+                return 2;
+            }
+            wavOutput = fileFromArg(args[i]);
+        } else if (args[i] == "--overwrite") {
+            overwrite = true;
+        } else if (args[i] == "--cancel") {
+            cancel = true;
+        } else if (args[i] == "--preview") {
+            previewOnly = true;
+        } else {
+            printUsage(std::cerr);
+            return 2;
+        }
+    }
+    if (wavOutput.getFullPathName().isEmpty()) {
+        std::cerr << "export-song requires --wav <out.wav>\n";
+        return 2;
+    }
+
+    HeadlessEngineSession session;
+    if (!session.initialize()) {
+        std::cerr << session.error() << "\n";
+        return 1;
+    }
+    if (!loadProjectForCli(input, session))
+        return 1;
+
+    const auto plan = magda::sunroom::planExportSong(session.engine(), wavOutput);
+    std::cout << plan.preview << "\n";
+    if (previewOnly)
+        return plan.refusal.isEmpty() ? 0 : 1;
+    const auto error =
+        magda::sunroom::runExportSong(session.engine(), wavOutput, overwrite, cancel);
+    if (error.isNotEmpty()) {
+        std::cerr << error << "\n";
+        return 1;
+    }
+    std::cout << "Exported " << wavOutput.getFullPathName() << "\n";
+    std::cout << "reveal " << wavOutput.getFullPathName() << "\n";
+    return 0;
+}
+
 int execCommands(const juce::StringArray& args) {
     if (args.size() < 3) {
         printUsage(std::cerr);
@@ -2031,6 +2536,8 @@ int main(int argc, char* argv[]) {
         return execCommands(args);
     if (command == "render")
         return renderProject(args);
+    if (command == "export-song")
+        return exportSongProject(args);
     if (command == "keyboard-play-focus")
         return keyboardPlayFocus();
     if (command == "scale-lock-insert")

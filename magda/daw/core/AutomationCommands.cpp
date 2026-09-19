@@ -790,18 +790,28 @@ void InsertTimeAutomationCommand::undo() {
 
 SetAutomationLanePointsCommand::SetAutomationLanePointsCommand(AutomationLaneId laneId,
                                                                std::vector<AutomationPoint> points)
-    : laneId_(laneId), points_(std::move(points)) {
-    auto& mgr = AutomationManager::getInstance();
-    const auto* lane = mgr.getLane(laneId_);
-    if (lane == nullptr || !lane->isAbsolute())
-        return;
+    : SetAutomationLanePointsCommand(laneId, std::move(points), false) {}
 
-    storedLane_ = *lane;
-    for (auto clipId : lane->clipIds) {
-        if (const auto* clip = mgr.getClip(clipId))
-            storedClips_.push_back(*clip);
+SetAutomationLanePointsCommand::SetAutomationLanePointsCommand(AutomationLaneId laneId,
+                                                               std::vector<AutomationPoint> points,
+                                                               bool removeLaneOnUndo)
+    : laneId_(laneId), points_(std::move(points)), removeLaneOnUndo_(removeLaneOnUndo) {
+    auto& mgr = AutomationManager::getInstance();
+    const auto& lanes = mgr.getLanes();
+    for (size_t i = 0; i < lanes.size(); ++i) {
+        if (lanes[i].id != laneId_)
+            continue;
+        if (!lanes[i].isAbsolute())
+            return;
+        storedLane_ = lanes[i];
+        storedIndex_ = i;
+        for (auto clipId : lanes[i].clipIds) {
+            if (const auto* clip = mgr.getClip(clipId))
+                storedClips_.push_back(*clip);
+        }
+        captured_ = true;
+        return;
     }
-    captured_ = true;
 }
 
 void SetAutomationLanePointsCommand::execute() {
@@ -810,6 +820,13 @@ void SetAutomationLanePointsCommand::execute() {
 
     auto& mgr = AutomationManager::getInstance();
     auto* lane = mgr.getLane(laneId_);
+    if (lane == nullptr) {
+        if (!removeLaneOnUndo_)
+            return;
+        AutomationLaneInfo restored = storedLane_;
+        mgr.insertLaneAt(restored, storedIndex_);
+        lane = mgr.getLane(laneId_);
+    }
     if (lane == nullptr)
         return;
 
@@ -826,6 +843,11 @@ void SetAutomationLanePointsCommand::execute() {
 void SetAutomationLanePointsCommand::undo() {
     if (!applied_)
         return;
+    if (removeLaneOnUndo_) {
+        AutomationManager::getInstance().deleteLane(laneId_);
+        applied_ = false;
+        return;
+    }
     AutomationManager::getInstance().restoreLaneState(storedLane_, storedClips_);
 }
 
