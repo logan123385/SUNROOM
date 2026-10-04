@@ -18,6 +18,8 @@ class SunroomMlxClient final : public llm::LLMClient {
                                const juce::String& model = {});
     static bool storeOpenAIKey(const juce::String& key, juce::String& error);
     static bool hasOpenAIKey();
+    /** True when sunroom-ai.json names a python and a model directory that exist. */
+    static bool localModelInstalled();
     // Cancel only companion/coach HTTP streams. Leaves specialist agent requests
     // and the local MLX worker running.
     static void cancelCoachRequests();

@@ -10,15 +10,15 @@
   on a machine where SimplySign Desktop is logged in (the cloud cert then
   appears in the Windows cert store as a virtual smart card).
 
-  Point this at a staging directory containing the unsigned MAGDA.exe,
+  Point this at a staging directory containing the unsigned SUNROOM.exe,
   magda_plugin_scanner.exe, magda-installer.nsi, and Microsoft's signed
   vc_redist.x64.exe from a local build's installer staging directory. It then:
-    1. signs MAGDA.exe and magda_plugin_scanner.exe in place,
+    1. signs SUNROOM.exe and magda_plugin_scanner.exe in place,
     2. runs makensis to build the installer,
     3. signs the installer,
     4. verifies every signature against the trust chain.
 
-  Output is renamed to MAGDA-<version>-Windows-x86_64-Setup.exe to match the
+  Output is renamed to SUNROOM-<version>-Windows-x86_64-Setup.exe to match the
   asset name the release workflow publishes, so it is a drop-in replacement for
   the unsigned installer.
 
@@ -107,7 +107,7 @@ Write-Host "version  : $Version"
 Write-Host "stage    : $StageDir"
 
 # The installer bootstraps the dynamic VC/OpenMP runtime before installing
-# MAGDA. Validate this explicitly so local release regeneration fails with a
+# SUNROOM. Validate this explicitly so local release regeneration fails with a
 # clear message rather than an opaque makensis "File not found" error.
 $vcRedist = Join-Path $StageDir "vc_redist.x64.exe"
 if (-not (Test-Path $vcRedist)) {
@@ -166,10 +166,10 @@ function Invoke-Sign([string]$Path) {
     Write-Host ""
 }
 
-# 1. Sign the two MAGDA executables in place. The ONNX Runtime and libxml2 DLLs,
+# 1. Sign the SUNROOM executable and its helpers in place. The ONNX Runtime and libxml2 DLLs,
 #    plus vc_redist.x64.exe, are already signed by their vendors and must not be
 #    re-signed.
-Invoke-Sign (Join-Path $StageDir "MAGDA.exe")
+Invoke-Sign (Join-Path $StageDir "SUNROOM.exe")
 $scanner = Join-Path $StageDir "magda_plugin_scanner.exe"
 if (Test-Path $scanner) {
     Invoke-Sign $scanner
@@ -178,7 +178,7 @@ if (Test-Path $scanner) {
 }
 $mcpBridge = Join-Path $StageDir "magda-mcp.exe"
 if (Test-Path $mcpBridge) {
-    # An MCP host launches this directly rather than through MAGDA, so an
+    # An MCP host launches this directly rather than through SUNROOM, so an
     # unsigned copy trips SmartScreen on its own account.
     Invoke-Sign $mcpBridge
 } else {
@@ -198,14 +198,14 @@ try {
     Pop-Location
 }
 
-$built = Join-Path $StageDir "MAGDA-$Version-Windows-Setup.exe"
+$built = Join-Path $StageDir "SUNROOM-$Version-Windows-Setup.exe"
 if (-not (Test-Path $built)) { throw "Installer not produced at $built" }
 
 # 3. Sign the installer itself.
 Invoke-Sign $built
 
 # 4. Rename to the published asset name (matches .github/workflows/release.yml).
-$final = Join-Path $StageDir "MAGDA-$Version-Windows-x86_64-Setup.exe"
+$final = Join-Path $StageDir "SUNROOM-$Version-Windows-x86_64-Setup.exe"
 Move-Item $built $final -Force
 
 # Refresh the checksum so it matches the signed installer.

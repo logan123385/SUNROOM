@@ -1853,7 +1853,7 @@ class PathsPage : public juce::Component {
   private:
     static juce::File presetsDefaultDir() {
         return juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
-            .getChildFile("MAGDA")
+            .getChildFile("SUNROOM")
             .getChildFile("Presets");
     }
 
@@ -1980,7 +1980,7 @@ class PathsPage : public juce::Component {
 
         if (presetsPath_.empty()) {
             auto def = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
-                           .getChildFile("MAGDA")
+                           .getChildFile("SUNROOM")
                            .getChildFile("Presets");
             presetsValue_.setText("default: " + def.getFullPathName(), juce::dontSendNotification);
         } else {
@@ -3159,7 +3159,7 @@ void PreferencesDialog::applySettings() {
     const juce::File presetsFrom(
         juce::String(pathsPage->getOriginalPresetsPath()).isEmpty()
             ? juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
-                  .getChildFile("MAGDA")
+                  .getChildFile("SUNROOM")
                   .getChildFile("Presets")
                   .getFullPathName()
             : juce::String(pathsPage->getOriginalPresetsPath()));

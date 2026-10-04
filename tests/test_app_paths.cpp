@@ -69,14 +69,14 @@ struct EnvScope {
 
 }  // namespace
 
-TEST_CASE("paths::dataDir defaults to OS appdata/MAGDA", "[app_paths]") {
+TEST_CASE("paths::dataDir defaults to OS appdata/SUNROOM", "[app_paths]") {
     EnvScope scope;
     unsetEnv("MAGDA_DATA_DIR");
     magda::Config::getInstance().setDataDir({});
     paths::resolve();
 
     auto expected = juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
-                        .getChildFile("MAGDA");
+                        .getChildFile("SUNROOM");
     REQUIRE(paths::dataDir() == expected);
     REQUIRE_FALSE(paths::dataDirOverriddenByEnv());
 }

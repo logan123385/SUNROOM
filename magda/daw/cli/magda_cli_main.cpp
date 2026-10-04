@@ -946,9 +946,15 @@ class CommandDispatcher {
         const auto question = words.joinIntoString(" ");
         const auto readiness = magda::SunroomMlxClient::localModelStatus();
         std::cout << readiness << "\n";
-        if (readiness.contains("not installed"))
+        if (!magda::SunroomMlxClient::localModelInstalled())
             return fail(readiness);
+#if JUCE_MAC
         std::cout << "provider this-mac-mlx\n";
+#elif JUCE_WINDOWS
+        std::cout << "provider this-pc-local\n";
+#else
+        std::cout << "provider local-runtime\n";
+#endif
         magda::SunroomMlxClient::resetCoachCancellation();
         const auto requestId = magda::sunroom::beginCoachRequest();
         std::cout << "request " << static_cast<unsigned long long>(requestId) << "\n";

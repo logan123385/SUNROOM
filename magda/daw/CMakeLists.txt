@@ -332,14 +332,22 @@ set_target_properties(magda_devices PROPERTIES
 )
 
 # JUCE GUI app — sources contributed below via add_subdirectory().
+# Windows resource compilation wants an .ico. The PNG is the macOS/Linux icon.
+if(WIN32)
+    set(SUNROOM_APP_ICON "${CMAKE_CURRENT_SOURCE_DIR}/../../assets/sunroom_icon.ico")
+else()
+    set(SUNROOM_APP_ICON "${CMAKE_CURRENT_SOURCE_DIR}/../../assets/sunroom_icon.png")
+endif()
+
 juce_add_gui_app(magda_daw_app
     VERSION "${MAGDA_BUNDLE_VERSION}"
     COMPANY_NAME "Conceptual Machines"
     PRODUCT_NAME "SUNROOM"
     # Give the personal fork its own stable identity and macOS permissions.
+    # PRODUCT_NAME is the Windows exe name too, so the installer looks for SUNROOM.exe.
     BUNDLE_ID "com.loganchambers.sunroom"
-    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/../../assets/sunroom_icon.png"
-    ICON_SMALL "${CMAKE_CURRENT_SOURCE_DIR}/../../assets/sunroom_icon.png"
+    ICON_BIG "${SUNROOM_APP_ICON}"
+    ICON_SMALL "${SUNROOM_APP_ICON}"
     MICROPHONE_PERMISSION_ENABLED TRUE
     MICROPHONE_PERMISSION_TEXT "SUNROOM needs microphone access to record audio."
     PLIST_TO_MERGE
@@ -1069,7 +1077,7 @@ if(MAGDA_HAVE_CLAP)
     elseif(WIN32)
         # Windows only searches the exe's directory, the cwd, and PATH — none of
         # which include the FetchContent lib dir. onnxruntime.dll is a regular
-        # load-time import of MAGDA.exe, so omitting it prevents the application
+        # load-time import of SUNROOM.exe, so omitting it prevents the application
         # from reaching main().
         add_custom_command(TARGET magda_daw_app POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different

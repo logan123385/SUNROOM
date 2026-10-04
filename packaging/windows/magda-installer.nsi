@@ -4,19 +4,21 @@
   !define VERSION "0.0.0"
 !endif
 
-Name "MAGDA"
-OutFile "MAGDA-${VERSION}-Windows-Setup.exe"
-InstallDir "$PROGRAMFILES64\MAGDA"
-InstallDirRegKey HKLM "Software\MAGDA" "Install_Dir"
+Name "SUNROOM"
+OutFile "SUNROOM-${VERSION}-Windows-Setup.exe"
+InstallDir "$PROGRAMFILES64\SUNROOM"
+InstallDirRegKey HKLM "Software\SUNROOM" "Install_Dir"
 RequestExecutionLevel admin
 Unicode True
 
-; %ProgramData%\MAGDA\bin — where the MCP bridge is installed. See the Install
+; %ProgramData%\SUNROOM\bin — where the MCP bridge is installed. See the Install
 ; section for why it is not under $INSTDIR.
 Var McpBinDir
 
-; UI settings
+; UI settings. The icon is staged next to this script at build time.
 !define MUI_ABORTWARNING
+!define MUI_ICON "${__FILEDIR__}\sunroom_icon.ico"
+!define MUI_UNICON "${__FILEDIR__}\sunroom_icon.ico"
 
 ; Pages
 !insertmacro MUI_PAGE_WELCOME
@@ -31,10 +33,10 @@ Var McpBinDir
 !insertmacro MUI_LANGUAGE "English"
 
 Section "Install"
-    ; MAGDA, ONNX Runtime, and the OpenMP runtime dynamically link the
+    ; SUNROOM, ONNX Runtime, and the OpenMP runtime dynamically link the
     ; Microsoft Visual C++ v14 runtime. A clean consumer Windows installation
     ; is not guaranteed to have it, so bootstrap the Microsoft-signed package
-    ; before placing MAGDA on disk. $PLUGINSDIR is removed automatically when
+    ; before placing SUNROOM on disk. $PLUGINSDIR is removed automatically when
     ; setup exits; the shared runtime itself remains serviceable by Windows.
     SetOutPath "$PLUGINSDIR"
     File "${__FILEDIR__}\vc_redist.x64.exe"
@@ -56,31 +58,31 @@ vc_redist_reboot:
 
 vc_redist_failed:
     MessageBox MB_ICONSTOP|MB_OK \
-        "Microsoft Visual C++ Runtime installation failed (exit code $0). MAGDA was not installed."
+        "Microsoft Visual C++ Runtime installation failed (exit code $0). SUNROOM was not installed."
     Abort
 
 vc_redist_ok:
     SetOutPath $INSTDIR
     ; ${__FILEDIR__} resolves to the directory of this .nsi at compile time, so
     ; the installer builds correctly regardless of makensis's working directory.
-    File "${__FILEDIR__}\MAGDA.exe"
+    File "${__FILEDIR__}\SUNROOM.exe"
     File "${__FILEDIR__}\mgd_doc_icon.ico"
     File /nonfatal "${__FILEDIR__}\magda_plugin_scanner.exe"
 
-    ; The MCP bridge (#1858) goes to %ProgramData%\MAGDA\bin, NOT $INSTDIR.
+    ; The MCP bridge goes to %ProgramData%\SUNROOM\bin, NOT $INSTDIR.
     ; An MCP host is configured with its absolute path and launches it itself,
     ; and hosts differ on whether that string is an argv array or something they
-    ; split on whitespace. The default $INSTDIR is "C:\Program Files\MAGDA", so
+    ; split on whitespace. The default $INSTDIR is "C:\Program Files\SUNROOM", so
     ; for the splitters the space breaks the command. %ProgramData% is a fixed
     ; name on every supported Windows and carries no user name, making it
     ; space-free regardless of who is logged in.
     ;
-    ; The bridge does not need to sit beside MAGDA: it locates a running
-    ; instance through the discovery record under the data dir, not by relative
-    ; path. SetShellVarContext is restored straight away so the Start Menu and
-    ; Desktop shortcuts below stay per-user as before.
+    ; The bridge does not need to sit beside SUNROOM: it locates a running
+    ; instance through the discovery record under %APPDATA%\SUNROOM, not by
+    ; relative path. SetShellVarContext is restored straight away so the Start
+    ; Menu and Desktop shortcuts below stay per-user as before.
     SetShellVarContext all
-    StrCpy $McpBinDir "$APPDATA\MAGDA\bin"
+    StrCpy $McpBinDir "$APPDATA\SUNROOM\bin"
     SetShellVarContext current
 
     SetOutPath "$McpBinDir"
@@ -92,14 +94,14 @@ vc_redist_ok:
     ; configure a host with the path that has the space in it.
     Delete "$INSTDIR\magda-mcp.exe"
 
-    ; All runtime DLLs staged next to MAGDA.exe: ONNX Runtime (a load-time app
+    ; All runtime DLLs staged next to SUNROOM.exe: ONNX Runtime (a load-time app
     ; dependency) and libxml2 + its transitive deps (DAWproject XSD validation).
     ; Windows only searches the exe's directory, so these must sit next to
-    ; MAGDA.exe. The release staging step asserts the critical DLLs are present,
+    ; SUNROOM.exe. The release staging step asserts the critical DLLs are present,
     ; so this fails loudly upstream if one goes missing.
     File "${__FILEDIR__}\*.dll"
 
-    ; Localization JSON files - StringTable looks for them next to MAGDA.exe
+    ; Localization JSON files - StringTable looks for them next to SUNROOM.exe
     SetOutPath "$INSTDIR\lang"
     File /r "${__FILEDIR__}\lang\*.*"
     SetOutPath $INSTDIR
@@ -147,40 +149,47 @@ vc_redist_ok:
     File /r "${__FILEDIR__}\models\*"
     SetOutPath $INSTDIR
 
+    ; Guided studio sounds, coach guide, and the local worker. The app looks
+    ; for these in <exe>\Sunroom. Without them Create still runs, but the sound
+    ; shelf and coach knowledge are empty on an installed machine.
+    SetOutPath "$INSTDIR\Sunroom"
+    File /r "${__FILEDIR__}\Sunroom\*"
+    SetOutPath $INSTDIR
+
     ; Create uninstaller
     WriteUninstaller "$INSTDIR\Uninstall.exe"
 
     ; Start Menu shortcuts
-    CreateDirectory "$SMPROGRAMS\MAGDA"
-    CreateShortcut "$SMPROGRAMS\MAGDA\MAGDA.lnk" "$INSTDIR\MAGDA.exe"
-    CreateShortcut "$SMPROGRAMS\MAGDA\Uninstall MAGDA.lnk" "$INSTDIR\Uninstall.exe"
+    CreateDirectory "$SMPROGRAMS\SUNROOM"
+    CreateShortcut "$SMPROGRAMS\SUNROOM\SUNROOM.lnk" "$INSTDIR\SUNROOM.exe"
+    CreateShortcut "$SMPROGRAMS\SUNROOM\Uninstall SUNROOM.lnk" "$INSTDIR\Uninstall.exe"
 
     ; Desktop shortcut
-    CreateShortcut "$DESKTOP\MAGDA.lnk" "$INSTDIR\MAGDA.exe"
+    CreateShortcut "$DESKTOP\SUNROOM.lnk" "$INSTDIR\SUNROOM.exe"
 
     ; Registry for Add/Remove Programs
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\MAGDA" \
-        "DisplayName" "MAGDA"
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\MAGDA" \
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SUNROOM" \
+        "DisplayName" "SUNROOM"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SUNROOM" \
         "UninstallString" '"$INSTDIR\Uninstall.exe"'
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\MAGDA" \
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SUNROOM" \
         "DisplayVersion" "${VERSION}"
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\MAGDA" \
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SUNROOM" \
         "Publisher" "Conceptual Machines"
-    WriteRegStr HKLM "Software\MAGDA" "Install_Dir" "$INSTDIR"
+    WriteRegStr HKLM "Software\SUNROOM" "Install_Dir" "$INSTDIR"
 
     ; File association for .mgd files
-    WriteRegStr HKCR ".mgd" "" "MAGDA.Project"
-    WriteRegStr HKCR "MAGDA.Project" "" "MAGDA Project"
-    WriteRegStr HKCR "MAGDA.Project\shell\open\command" "" '"$INSTDIR\MAGDA.exe" "%1"'
-    WriteRegStr HKCR "MAGDA.Project\DefaultIcon" "" "$INSTDIR\mgd_doc_icon.ico"
+    WriteRegStr HKCR ".mgd" "" "SUNROOM.Project"
+    WriteRegStr HKCR "SUNROOM.Project" "" "SUNROOM Project"
+    WriteRegStr HKCR "SUNROOM.Project\shell\open\command" "" '"$INSTDIR\SUNROOM.exe" "%1"'
+    WriteRegStr HKCR "SUNROOM.Project\DefaultIcon" "" "$INSTDIR\mgd_doc_icon.ico"
 
     ; Notify shell of file association change
     System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, i 0, i 0)'
 SectionEnd
 
 Section "Uninstall"
-    Delete "$INSTDIR\MAGDA.exe"
+    Delete "$INSTDIR\SUNROOM.exe"
     Delete "$INSTDIR\mgd_doc_icon.ico"
     Delete "$INSTDIR\magda_plugin_scanner.exe"
     ; Installs predating the move to %ProgramData% put the bridge here.
@@ -194,26 +203,27 @@ Section "Uninstall"
     RMDir /r "$INSTDIR\drumkits"
     RMDir /r "$INSTDIR\dawproject"
     RMDir /r "$INSTDIR\models"
+    RMDir /r "$INSTDIR\Sunroom"
     RMDir "$INSTDIR"
 
     ; The MCP bridge, out under %ProgramData%. Both RMDirs are non-recursive on
-    ; purpose: MAGDA\bin goes only if the bridge was all it held, and MAGDA only
-    ; if nothing else has since been written there.
+    ; purpose: SUNROOM\bin goes only if the bridge was all it held, and SUNROOM
+    ; only if nothing else has since been written there.
     SetShellVarContext all
-    Delete "$APPDATA\MAGDA\bin\magda-mcp.exe"
-    RMDir "$APPDATA\MAGDA\bin"
-    RMDir "$APPDATA\MAGDA"
+    Delete "$APPDATA\SUNROOM\bin\magda-mcp.exe"
+    RMDir "$APPDATA\SUNROOM\bin"
+    RMDir "$APPDATA\SUNROOM"
     SetShellVarContext current
 
-    Delete "$SMPROGRAMS\MAGDA\*.*"
-    RMDir "$SMPROGRAMS\MAGDA"
-    Delete "$DESKTOP\MAGDA.lnk"
+    Delete "$SMPROGRAMS\SUNROOM\*.*"
+    RMDir "$SMPROGRAMS\SUNROOM"
+    Delete "$DESKTOP\SUNROOM.lnk"
 
-    DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\MAGDA"
-    DeleteRegKey HKLM "Software\MAGDA"
+    DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SUNROOM"
+    DeleteRegKey HKLM "Software\SUNROOM"
 
     ; Remove file association
     DeleteRegKey HKCR ".mgd"
-    DeleteRegKey HKCR "MAGDA.Project"
+    DeleteRegKey HKCR "SUNROOM.Project"
     System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, i 0, i 0)'
 SectionEnd

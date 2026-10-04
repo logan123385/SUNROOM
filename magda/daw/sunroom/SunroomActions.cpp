@@ -2339,7 +2339,10 @@ juce::File resolveStarterFile(const juce::String& fileName) {
         return {};
     const auto root = soundLibrary();
     const auto file = root.getChildFile(fileName);
-    if (!file.existsAsFile() || file.getParentDirectory() != root)
+    // Path equality is case-sensitive in juce::File even on Windows, where the
+    // filesystem is not. A case-only mismatch would refuse a real starter file.
+    if (!file.existsAsFile() ||
+        !file.getParentDirectory().getFullPathName().equalsIgnoreCase(root.getFullPathName()))
         return {};
     return file;
 }

@@ -133,6 +133,11 @@ target_compile_definitions(magda_agents PRIVATE SUNROOM_SOURCE_DIR="${PROJECT_SO
 if(APPLE)
     target_link_libraries(magda_agents PRIVATE "-framework Security")
 endif()
+if(WIN32)
+    # CredWrite/CredRead for the Luna API key. PUBLIC so the app and CLI
+    # actually link advapi32; a static library does not pull it in by itself.
+    target_link_libraries(magda_agents PUBLIC advapi32)
+endif()
 
 # Compiler warnings
 if(MSVC)

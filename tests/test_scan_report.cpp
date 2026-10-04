@@ -62,7 +62,7 @@ TEST_CASE("getScanReportFile returns expected path", "[scan-report]") {
     auto reportFile = coordinator.getScanReportFile();
 
     CHECK(reportFile.getFileName() == "last_scan_report.txt");
-    CHECK(reportFile.getParentDirectory().getFileName() == "MAGDA");
+    CHECK(reportFile.getParentDirectory().getFileName() == "SUNROOM");
 }
 
 // ============================================================================
