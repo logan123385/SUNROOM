@@ -1,3 +1,12 @@
+#if defined(_WIN32)
+    #ifndef NOMINMAX
+        #define NOMINMAX
+    #endif
+    #ifndef WIN32_LEAN_AND_MEAN
+        #define WIN32_LEAN_AND_MEAN
+    #endif
+#endif
+
 #include "sunroom_mlx_client.hpp"
 
 #include <atomic>
@@ -9,6 +18,10 @@
 #include "../daw/core/LLMClientProvider.hpp"
 #if JUCE_MAC
     #include <Security/Security.h>
+#endif
+#if JUCE_WINDOWS
+    #include <wincred.h>
+#else
     #include <unistd.h>
 #endif
 
@@ -35,6 +48,43 @@ bool coachEpochCancelled(std::uint64_t epoch) {
     return epoch != 0 && coachCancelEpoch.load() >= epoch;
 }
 
+#if JUCE_WINDOWS
+constexpr const wchar_t* kWindowsCredentialTarget = L"com.loganchambers.sunroom.openai";
+#endif
+
+bool openAIKeyLooksValid(const juce::String& key, juce::String& error) {
+    if (!key.startsWith("sk-") || key.length() < 24 || key.containsAnyOf(" \r\n\t")) {
+        error = "Paste a valid OpenAI API key beginning with sk-.";
+        return false;
+    }
+    return true;
+}
+
+juce::String missingLocalModelReason() {
+#if JUCE_WINDOWS
+    return "The on-device MLX model is not installed. MLX runs on Apple Silicon; on Windows use "
+           "Local server or Luna.";
+#else
+    return "The local AI model is not installed. Run Setup AI.command in the SUNROOM folder.";
+#endif
+}
+
+juce::String missingLocalModelStatus() {
+    return missingLocalModelReason() +
+           " Offline Create and Play still works. This is not an AI answer.";
+}
+
+bool modelFilesPresent() {
+    const auto configFile = paths::dataDir().getChildFile("sunroom-ai.json");
+    if (!configFile.existsAsFile())
+        return false;
+    const auto config = juce::JSON::parse(configFile);
+    const auto python = config["python"].toString();
+    const auto model = config["model"].toString();
+    return python.isNotEmpty() && model.isNotEmpty() && juce::File(python).existsAsFile() &&
+           juce::File(model).getChildFile("config.json").existsAsFile();
+}
+
 juce::String openAIKey() {
 #if JUCE_MAC
     const void* keys[] = {kSecClass, kSecAttrService, kSecAttrAccount, kSecReturnData,
@@ -55,6 +105,20 @@ juce::String openAIKey() {
     }
     if (result)
         CFRelease(result);
+#elif JUCE_WINDOWS
+    PCREDENTIALW credential = nullptr;
+    if (!CredReadW(kWindowsCredentialTarget, CRED_TYPE_GENERIC, 0, &credential) ||
+        credential == nullptr)
+        return {};
+    if (credential->CredentialBlob == nullptr || credential->CredentialBlobSize == 0) {
+        CredFree(credential);
+        return {};
+    }
+    const auto key = juce::String::fromUTF8(
+        reinterpret_cast<const char*>(credential->CredentialBlob),
+        static_cast<int>(credential->CredentialBlobSize));
+    CredFree(credential);
+    return key;
 #endif
     return {};
 }
@@ -100,17 +164,22 @@ juce::var endpoint(juce::String& error) {
     const auto model = config["model"].toString();
     if (python.isEmpty() || model.isEmpty() || !juce::File(python).existsAsFile() ||
         !juce::File(model).getChildFile("config.json").existsAsFile()) {
-        error = "The local AI model is not installed. Run Setup AI.command in the SUNROOM folder.";
+        error = missingLocalModelReason();
         return {};
     }
     readyFile = paths::dataDir().getChildFile("ai-runtime-" + juce::Uuid().toString() + ".json");
     worker = std::make_unique<juce::ChildProcess>();
-    juce::StringArray args{python,         resource("mlx_server.py").getFullPathName(),
-                           "--model",      model,
-                           "--ready-file", readyFile.getFullPathName()};
-#if JUCE_MAC
-    args.add("--parent-pid");
-    args.add(juce::String(static_cast<int>(getpid())));
+    juce::StringArray args{python,
+                           resource("mlx_server.py").getFullPathName(),
+                           "--model",
+                           model,
+                           "--ready-file",
+                           readyFile.getFullPathName(),
+                           "--parent-pid"};
+#if JUCE_WINDOWS
+    args.add(juce::String(static_cast<juce::int64>(GetCurrentProcessId())));
+#else
+    args.add(juce::String(static_cast<int>(::getpid())));
 #endif
     if (!worker->start(args, 0)) {
         error = "SUNROOM could not start its local MLX helper.";
@@ -141,7 +210,14 @@ llm::Response request(const juce::String& system, const juce::String& user, int 
         token = openAIKey();
         if (token.isEmpty()) {
             response.error =
+#if JUCE_MAC
                 "Enter your OpenAI API key in the Luna field and save it to Keychain first.";
+#elif JUCE_WINDOWS
+                "Enter your OpenAI API key in the Luna field and save it to Credential Manager "
+                "first.";
+#else
+                "Enter your OpenAI API key in the Luna field and save it first.";
+#endif
             return response;
         }
         baseUrl = "https://api.openai.com/v1";
@@ -155,7 +231,11 @@ llm::Response request(const juce::String& system, const juce::String& user, int 
         baseUrl = juce::String(normalizeOpenAIBaseUrl(baseUrl.toStdString()));
         if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
             response.error =
+#if JUCE_WINDOWS
+                "Enter the local server URL, including http://127.0.0.1 or https:// and its port.";
+#else
                 "Enter the mini PC's local server URL, including https:// and its port.";
+#endif
             return response;
         }
         if (baseUrl.startsWith("http://") && !isLoopbackUrl(baseUrl)) {
@@ -236,7 +316,12 @@ llm::Response request(const juce::String& system, const juce::String& user, int 
     }
     if (!connected) {
         response.error = cloud    ? "Luna could not be reached, or the request was stopped."
-                         : remote ? "Could not reach the mini PC's AI server."
+                         : remote ?
+#if JUCE_WINDOWS
+                                   "Could not reach the local AI server."
+#else
+                                   "Could not reach the mini PC's AI server."
+#endif
                                   : "Local AI stopped or did not respond.";
         return response;
     }
@@ -308,22 +393,30 @@ SunroomMlxClient::SunroomMlxClient(int backend, juce::String remoteUrl, juce::St
       remoteModel_(std::move(remoteModel)) {}
 
 juce::String SunroomMlxClient::getName() const {
-    return backend_ == 3   ? "SUNROOM / GPT-5.6 Luna / xhigh"
-           : backend_ == 2 ? "SUNROOM / Mini PC"
-                           : "SUNROOM / MLX Qwen3.5-4B";
+    if (backend_ == 3)
+        return "SUNROOM / GPT-5.6 Luna / xhigh";
+    if (backend_ == 2)
+        return "SUNROOM / local server";
+#if JUCE_MAC
+    return "SUNROOM / MLX Qwen3.5-4B";
+#else
+    return "SUNROOM / on-device";
+#endif
 }
 
 bool SunroomMlxClient::hasOpenAIKey() {
     return openAIKey().isNotEmpty();
 }
 
+bool SunroomMlxClient::localModelInstalled() {
+    return modelFilesPresent();
+}
+
 bool SunroomMlxClient::storeOpenAIKey(const juce::String& input, juce::String& error) {
-#if JUCE_MAC
     const auto key = input.trim();
-    if (!key.startsWith("sk-") || key.length() < 24 || key.containsAnyOf(" \r\n\t")) {
-        error = "Paste a valid OpenAI API key beginning with sk-.";
+    if (!openAIKeyLooksValid(key, error))
         return false;
-    }
+#if JUCE_MAC
     const void* queryKeys[] = {kSecClass, kSecAttrService, kSecAttrAccount};
     const void* queryValues[] = {kSecClassGenericPassword,
                                  CFSTR("com.loganchambers.sunroom.openai"), CFSTR("default")};
@@ -351,9 +444,22 @@ bool SunroomMlxClient::storeOpenAIKey(const juce::String& input, juce::String& e
     if (status == errSecSuccess)
         return true;
     error = "Keychain could not save the key (" + juce::String(static_cast<int>(status)) + ").";
+#elif JUCE_WINDOWS
+    CREDENTIALW credential{};
+    credential.Type = CRED_TYPE_GENERIC;
+    credential.TargetName = const_cast<LPWSTR>(kWindowsCredentialTarget);
+    credential.UserName = const_cast<LPWSTR>(L"default");
+    const auto bytes = key.getNumBytesAsUTF8();
+    credential.CredentialBlobSize = static_cast<DWORD>(bytes);
+    credential.CredentialBlob = reinterpret_cast<LPBYTE>(const_cast<char*>(key.toRawUTF8()));
+    credential.Persist = CRED_PERSIST_LOCAL_MACHINE;
+    credential.Comment = const_cast<LPWSTR>(L"SUNROOM OpenAI API key");
+    if (CredWriteW(&credential, 0))
+        return true;
+    error = "Credential Manager could not save the key (" +
+            juce::String(static_cast<int>(GetLastError())) + ").";
 #else
-    juce::ignoreUnused(input);
-    error = "Secure API key entry is currently supported on macOS.";
+    error = "Secure API key entry is currently supported on macOS and Windows.";
 #endif
     return false;
 }
@@ -446,16 +552,9 @@ void SunroomMlxClient::shutdown() {
 
 juce::String SunroomMlxClient::localModelStatus() {
     const auto configFile = paths::dataDir().getChildFile("sunroom-ai.json");
-    if (!configFile.existsAsFile())
-        return "The local AI model is not installed. Run Setup AI.command in the SUNROOM folder. "
-               "Offline Create and Play still works. This is not an AI answer.";
+    if (!modelFilesPresent())
+        return missingLocalModelStatus();
     const auto config = juce::JSON::parse(configFile);
-    const auto python = config["python"].toString();
-    const auto model = config["model"].toString();
-    if (python.isEmpty() || model.isEmpty() || !juce::File(python).existsAsFile() ||
-        !juce::File(model).getChildFile("config.json").existsAsFile())
-        return "The local AI model is not installed. Run Setup AI.command in the SUNROOM folder. "
-               "Offline Create and Play still works. This is not an AI answer.";
     juce::String line = "Local model files are present.";
     if (const auto modelId = config["model_id"].toString(); modelId.isNotEmpty())
         line += " model " + modelId;

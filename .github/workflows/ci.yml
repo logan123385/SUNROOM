@@ -1218,11 +1218,11 @@ jobs:
     - name: Verify executable
       if: github.ref == 'refs/heads/main' && github.event_name == 'push' && runner.environment == 'self-hosted'
       run: |
-        $exe = Get-ChildItem -Path build-release -Recurse -Filter "MAGDA.exe" | Select-Object -First 1
+        $exe = Get-ChildItem -Path build-release -Recurse -Filter "SUNROOM.exe" | Select-Object -First 1
         if ($exe) {
-          Write-Output "✅ MAGDA.exe built successfully at $($exe.FullName)"
+          Write-Output "✅ SUNROOM.exe built successfully at $($exe.FullName)"
         } else {
-          Write-Error "MAGDA.exe not found"
+          Write-Error "SUNROOM.exe not found"
           exit 1
         }
 

@@ -75,8 +75,21 @@ class Boundary(unittest.TestCase):
             return e.code, json.load(e)
 
     def test_private_credentials(self):
-        self.assertEqual(stat.S_IMODE(self.ready.stat().st_mode), 0o600)
+        if os.name != "nt":
+            self.assertEqual(stat.S_IMODE(self.ready.stat().st_mode), 0o600)
         self.assertGreaterEqual(len(self.config["token"]), 40)
+
+    def test_process_exists_does_not_use_signal_zero_on_purpose(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "sunroom_mlx_server", ROOT / "resources/sunroom/mlx_server.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.assertTrue(module.process_exists(os.getpid()))
+        self.assertFalse(module.process_exists(0))
+        self.assertFalse(module.process_exists(2**30))
 
     def test_unauthenticated_rejected(self):
         self.assertEqual(self.post({}, False)[0], 401)

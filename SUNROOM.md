@@ -12,15 +12,15 @@ Logan's personal psybient / psychill studio, built on [MAGDA](https://github.com
 6. **Full studio** opens the arrangement, piano roll, mixer, recording, automation and plugin chains. Coloured blocks are your song; **SUNROOM / Guided studio** brings you back.
 7. **Save project** keeps an editable `.mgd` song. **Export audio** makes a WAV or FLAC you can share. Start with WAV 24-bit, 48 kHz.
 
-**Cmd-Z** undoes an edit, including a whole generated journey. Each new journey adds tracks, so undo an unwanted version before building another. The Create-page drawing previews the next journey; the actual song lives in Full studio. Warmth, Space and Motion shape the next generated music.
+**Cmd-Z** on macOS, or **Ctrl+Z** on Windows, undoes an edit, including a whole generated journey. Each new journey adds tracks, so undo an unwanted version before building another. The Create-page drawing previews the next journey; the actual song lives in Full studio. Warmth, Space and Motion shape the next generated music.
 
 ## Three AI choices
 
 Open **AI companion** and choose a backend. This choice also updates the Full studio music, chord, command, sound-design and related agent roles.
 
-- **This Mac / MLX:** Qwen3.5-4B, 4-bit weights, running on Apple Silicon. The app starts its private helper when asked, processes one local request at a time, and unloads the model after three idle minutes. It never falls back to a paid API. No AI is needed to create, play, edit or export music.
-- **GPT-5.6 Luna / extra high:** paste your own OpenAI API key into the masked field and click **Save to Keychain**. The key is stored in macOS Keychain, never in song files or the source code. Requests use `gpt-5.6-luna`, `reasoning.effort: xhigh` and `store: false`. Your OpenAI account must have access and API billing. This is separate from a ChatGPT subscription. Model access is verified only by a real request using your key. [Official model documentation](https://developers.openai.com/api/docs/models/gpt-5.6-luna).
-- **Mini PC / local server:** run an OpenAI-compatible model server on the Windows PC, then enter its LAN URL, including `/v1`. Prefer `https://` on the network; plain `http://` is only allowed for loopback. SUNROOM keeps audio on the Mac while the PC answers AI questions. A 16 GB PC's speed depends on its CPU/GPU; it does not combine its RAM or processors with the Mac's MLX runtime.
+- **This Mac / MLX:** Qwen3.5-4B, 4-bit weights, running on Apple Silicon. The app starts its private helper when asked, processes one local request at a time, and unloads the model after three idle minutes. It never falls back to a paid API. No AI is needed to create, play, edit or export music. This runtime does not run on Windows.
+- **GPT-5.6 Luna / extra high:** paste your own OpenAI API key into the masked field and click **Save to Keychain** on macOS, or **Save key** on Windows. The key is stored in macOS Keychain or Windows Credential Manager, never in song files or the source code. Requests use `gpt-5.6-luna`, `reasoning.effort: xhigh` and `store: false`. Your OpenAI account must have access and API billing. This is separate from a ChatGPT subscription. Model access is verified only by a real request using your key. [Official model documentation](https://developers.openai.com/api/docs/models/gpt-5.6-luna).
+- **Mini PC / local server:** run an OpenAI-compatible model server, then enter its URL, including `/v1`. On macOS this is usually a separate Windows PC. On Windows, SUNROOM itself is the studio, so the server can be LM Studio on the same machine (`http://127.0.0.1:1234/v1` is allowed). Prefer `https://` on the network; plain `http://` is only allowed for loopback. A 16 GB PC's speed depends on its CPU/GPU; it does not combine its RAM or processors with a Mac's MLX runtime.
 
 For the mini PC, [LM Studio's Developer tab](https://lmstudio.ai/docs/developer/core/server) can start a local server. Enable its local-network serving option, load a model suitable for that PC, and use the address and model ID shown by the server in AI companion. If the server requires a token, configure it in Full studio's AI settings. Keep this on your private network. The mini PC connection cannot be tested without its address and running server.
 
@@ -36,14 +36,26 @@ The seven starter instruments cover slow pads, sub bass, marimba, djembe, kick, 
 
 ## Local setup and source
 
+macOS:
+
 - Application data: `~/Library/SUNROOM`
 - Local runtime: `~/Library/SUNROOM/runtime`
 - Local model: `~/Library/SUNROOM/Models/Qwen3.5-4B-4bit`
 - AI configuration: `~/Library/SUNROOM/sunroom-ai.json` (paths only)
+
+Windows:
+
+- Application data: `%APPDATA%\SUNROOM` (typically `C:\Users\<you>\AppData\Roaming\SUNROOM`)
+- Installed app: `C:\Program Files\SUNROOM\SUNROOM.exe`, with guided sounds and the coach guide in `Sunroom\` beside the executable
+- MCP bridge: `%ProgramData%\SUNROOM\bin\magda-mcp.exe` (kept out of Program Files so the path has no spaces)
+- On-device MLX is not available. Use **Local server** or **Luna**. **Setup AI.ps1** prints that guidance and does not download MLX weights.
+
+Shared:
+
 - Core guide: `resources/sunroom/knowledge/coach.md`
 - Original sound license: `resources/sunroom/Sounds/LICENSE.txt`
 
-**Setup AI.command** reinstalls the MLX runtime/model using Homebrew Python 3.12. Initial model download is about 3 GB. The running app uses installed local files. Keep the source folder for rebuilding and development; the installed app uses its bundled resources and separate data directory.
+**Setup AI.command** on macOS reinstalls the MLX runtime/model using Homebrew Python 3.12. Initial model download is about 3 GB. The running app uses installed local files. Keep the source folder for rebuilding and development; the installed app uses its bundled resources and separate data directory.
 
 ## Developer notes
 

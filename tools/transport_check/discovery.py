@@ -25,16 +25,16 @@ class DiscoveryError(Exception):
 
 
 def os_default_app_data_dir() -> Path:
-    """`juce::File::userApplicationDataDirectory` / "MAGDA" — `alwaysOSDefault()`.
+    """`juce::File::userApplicationDataDirectory` / "SUNROOM" — `alwaysOSDefault()`.
 
     The three values JUCE resolves that special location to, per platform,
     read off `juce_Files_*` rather than assumed:
 
     - macOS is `~/Library`, **not** `~/Library/Application Support`. JUCE keeps
       the latter for `userApplicationDataDirectory` on no platform, and an app
-      that wants it appends it itself. MAGDA does not, so its data lives in
-      `~/Library/MAGDA`.
-    - Windows is `CSIDL_APPDATA`, the roaming profile.
+      that wants it appends it itself. SUNROOM does not, so its data lives in
+      `~/Library/SUNROOM`.
+    - Windows is `CSIDL_APPDATA`, the roaming profile (`%APPDATA%\\SUNROOM`).
     - Linux is `XDG_CONFIG_HOME` or `~/.config`.
     """
     if sys.platform == "darwin":
@@ -44,7 +44,7 @@ def os_default_app_data_dir() -> Path:
         base = Path(appdata) if appdata else Path.home() / "AppData" / "Roaming"
     else:
         base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
-    return base / "MAGDA"
+    return base / "SUNROOM"
 
 
 def data_dir(override: str | os.PathLike[str] | None = None) -> Path:

@@ -253,14 +253,14 @@ def run_discovery(context: Context, others: list[discovery.Record]) -> None:
     def bridge_location(exe: Path) -> tuple[Path, str]:
         """Mirror of `McpPage::bridgeExecutable` — where the page sends a host.
 
-        Two platforms deliberately do not publish the copy beside MAGDA: Windows
-        because the space in `C:\\Program Files` breaks hosts that split their
-        configured command on whitespace, Linux because an AppImage's mount is
-        gone the moment MAGDA exits.
+        Two platforms deliberately do not publish the copy beside SUNROOM: Windows
+        because the space in `C:\\Program Files\\SUNROOM` breaks hosts that split
+        their configured command on whitespace, Linux because an AppImage's mount
+        is gone the moment SUNROOM exits.
         """
         if sys.platform == "win32":
             program_data = Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData"))
-            installed = program_data / "MAGDA" / "bin" / bridge_name()
+            installed = program_data / "SUNROOM" / "bin" / bridge_name()
             if installed.exists():
                 return installed, "installed under %ProgramData%"
             return exe.parent / bridge_name(), "build tree, beside MAGDA"

@@ -19,11 +19,25 @@ namespace magda::sunroom {
 namespace {
 const juce::Colour ink(0xff150d24), panel(0xff21152f), edge(0xff4a305d), paper(0xffffeee4),
     muted(0xffbca7c9), orange(0xffffa569), violet(0xffb995fa);
+juce::Font sunroomFont(float size, bool bold) {
+#if JUCE_WINDOWS
+    const char* name = "Segoe UI";
+#else
+    const char* name = "Avenir Next";
+#endif
+    return juce::Font(juce::FontOptions(name, size, bold ? juce::Font::bold : juce::Font::plain));
+}
+juce::String undoShortcut() {
+#if JUCE_MAC
+    return "Cmd-Z";
+#else
+    return "Ctrl+Z";
+#endif
+}
 void text(juce::Graphics& g, const juce::String& s, juce::Rectangle<int> r, float size = 14,
           juce::Colour colour = paper, bool bold = false) {
     g.setColour(colour);
-    g.setFont(juce::Font(
-        juce::FontOptions("Avenir Next", size, bold ? juce::Font::bold : juce::Font::plain)));
+    g.setFont(sunroomFont(size, bold));
     g.drawFittedText(s, r, juce::Justification::centredLeft, 2);
 }
 void card(juce::Graphics& g, juce::Rectangle<int> r, juce::Colour fill = panel) {
@@ -80,7 +94,7 @@ class Skin final : public juce::LookAndFeel_V4 {
             text(g, lines[1], r, 11, muted);
         } else {
             g.setColour(colour);
-            g.setFont(juce::Font(juce::FontOptions("Avenir Next", 13, juce::Font::bold)));
+            g.setFont(sunroomFont(13, true));
             g.drawFittedText(b.getButtonText(), r, juce::Justification::centred, 1);
         }
     }
@@ -237,9 +251,9 @@ SunroomStudio::SunroomStudio(AudioEngine* engine) : engine_(engine) {
     create_.setName("primary");
     play_.setName("primary");
     ask_.setName("primary");
-    create_.setTooltip(
-        "Fixed 8-bar Arrangement loop: A natural minor, 100 BPM, 4/4. Not a Session scene. "
-        "Does not use feeling, home note, or pace. Cmd-Z undoes the whole addition.");
+    create_.setTooltip(juce::String("Fixed 8-bar Arrangement loop: A natural minor, 100 BPM, 4/4. "
+                                    "Not a Session scene. Does not use feeling, home note, or pace. ") +
+                       undoShortcut() + " undoes the whole addition.");
     journey_.setTooltip(
         "Uses the feeling, home note, pace, length, and atmosphere controls. Create and Play does "
         "not.");
@@ -367,8 +381,13 @@ SunroomStudio::SunroomStudio(AudioEngine* engine) : engine_(engine) {
         options_.bars = length_.getSelectedId();
         repaint();
     };
+#if JUCE_MAC
     aiBackend_.addItem("This Mac / MLX", 1);
     aiBackend_.addItem("Mini PC / local server", 2);
+#else
+    aiBackend_.addItem("On-device model", 1);
+    aiBackend_.addItem("Local server", 2);
+#endif
     aiBackend_.addItem("GPT-5.6 Luna / extra high", 3);
     auto savedProvider = Config::getInstance().getAgentLLMConfig("music").provider;
     aiBackend_.setSelectedId(savedProvider == provider::SUNROOM_LUNA   ? 3
@@ -427,7 +446,7 @@ SunroomStudio::SunroomStudio(AudioEngine* engine) : engine_(engine) {
         editor->setColour(juce::TextEditor::textColourId, paper);
         editor->setColour(juce::TextEditor::outlineColourId, edge);
         editor->setColour(juce::TextEditor::focusedOutlineColourId, violet);
-        editor->setFont(juce::Font(juce::FontOptions("Avenir Next", 15, juce::Font::plain)));
+        editor->setFont(sunroomFont(15, false));
         editor->setIndents(16, 12);
         addAndMakeVisible(editor);
     }
@@ -445,7 +464,11 @@ SunroomStudio::SunroomStudio(AudioEngine* engine) : engine_(engine) {
         "Try: 'Give me a recipe for a warm, floating loop at 84 BPM, 8 bars.'\n\nThe assistant "
         "receives your current musical settings. It cannot hear your audio.");
     remoteUrl_.setText(Config::getInstance().getLocalServerUrl());
+#if JUCE_WINDOWS
+    remoteUrl_.setTextToShowWhenEmpty("http://127.0.0.1:1234/v1", muted);
+#else
     remoteUrl_.setTextToShowWhenEmpty("https://your-mini-pc:8080/v1", muted);
+#endif
     remoteModel_.setText(Config::getInstance().getLocalServerModel());
     remoteModel_.setTextToShowWhenEmpty("Model ID from the mini PC's server", muted);
     remoteUrl_.setTooltip(
@@ -454,13 +477,22 @@ SunroomStudio::SunroomStudio(AudioEngine* engine) : engine_(engine) {
     apiKey_.setPasswordCharacter(0x2022);
     apiKey_.setInputRestrictions(512);
     apiKey_.setTextToShowWhenEmpty("Paste your OpenAI API key here", muted);
+#if JUCE_WINDOWS
+    saveKey_.setButtonText("Save key");
+#endif
     saveKey_.onClick = [this] {
         juce::String error;
         if (SunroomMlxClient::storeOpenAIKey(apiKey_.getText(), error)) {
             apiKey_.clear();
             apiKey_.setTextToShowWhenEmpty("Key saved securely. Paste here to replace it.", muted);
+#if JUCE_WINDOWS
+            answer_.setText(
+                "Your key is saved in Windows Credential Manager. Luna uses gpt-5.6-luna with "
+                "extra-high reasoning. Ask a question to check your account's access.");
+#else
             answer_.setText("Your key is saved in macOS Keychain. Luna uses gpt-5.6-luna with "
                             "extra-high reasoning. Ask a question to check your account's access.");
+#endif
         } else
             answer_.setText(error);
     };
@@ -1040,9 +1072,16 @@ void SunroomStudio::paintCoach(juce::Graphics& g) {
          aiBackend_.getSelectedId() == 3 ? "Luna / xhigh. Sends your question and project context "
                                            "to OpenAI. API usage is billed separately."
          : aiBackend_.getSelectedId() == 2
+#if JUCE_WINDOWS
+             ? "Sends questions to a server on this PC. LM Studio works. Plain http:// is allowed "
+               "for 127.0.0.1 and localhost."
+             : "On-device MLX runs on Apple Silicon. On Windows, use Local server or Luna. "
+               "Create and Play does not need a model.",
+#else
              ? "Sends questions to your mini PC. Keep both computers on your private network."
              : "Local MLX on this Mac. No cloud fallback. The assistant cannot hear your audio.",
-         {37, 131, getWidth() - 74, 22}, 13, muted);
+#endif
+         {37, 131, getWidth() - 74, 36}, 13, muted);
     text(g, "Supported prompts turn on only when this song can use them.",
          {37, 178, getWidth() - 74, 18}, 12, muted);
 }
@@ -1111,7 +1150,7 @@ void SunroomStudio::mouseDown(const juce::MouseEvent& event) {
                             hit.second, reader->lengthInSamples / reader->sampleRate,
                             engine_ ? engine_->getCurrentPosition() : 0));
                         status_ = "Added " + hit.second.getFileNameWithoutExtension() +
-                                  " at the playhead. Cmd-Z undoes this.";
+                                  " at the playhead. " + undoShortcut() + " undoes this.";
                     } else {
                         status_ = "Could not read the starter sound. Nothing was added.";
                     }
@@ -1517,7 +1556,7 @@ void SunroomStudio::buildJourney() {
     if (options_.bars > 8)
         status_ += " The opening is mostly atmosphere — the pulse arrives later. "
                    "Try 8 bars for a fuller start.";
-    status_ += " Cmd-Z undoes this whole journey.";
+    status_ += " " + undoShortcut() + " undoes this whole journey.";
     repaint();
 }
 void SunroomStudio::addMelody() {
@@ -1543,7 +1582,7 @@ void SunroomStudio::askCoach() {
     const int backend = aiBackend_.getSelectedId();
     if (backend == 1) {
         const auto readiness = SunroomMlxClient::localModelStatus();
-        if (readiness.startsWith("The local AI model is not installed")) {
+        if (!SunroomMlxClient::localModelInstalled()) {
             busy_ = false;
             answer_.setText(readiness);
             status_ = readiness;
@@ -1551,7 +1590,11 @@ void SunroomStudio::askCoach() {
         }
     } else if (backend == 2 && remoteUrl_.getText().trim().isEmpty()) {
         busy_ = false;
+#if JUCE_WINDOWS
+        status_ = "No local server address. Your music is unchanged. This is not an AI answer.";
+#else
         status_ = "No mini PC address. Your music is unchanged. This is not an AI answer.";
+#endif
         answer_.setText(status_);
         return;
     } else if (backend == 3 && !SunroomMlxClient::hasOpenAIKey()) {
@@ -1570,7 +1613,11 @@ void SunroomStudio::askCoach() {
     answer_.setText(
         backend == 3 ? "Luna is thinking with extra-high reasoning..."
         : backend == 2
+#if JUCE_WINDOWS
+            ? "Asking the local server..."
+#else
             ? "Asking your mini PC..."
+#endif
             : "Finding a little direction... The first answer also loads the local model.");
     juce::String context = coachContextPacket();
     context += "Create-page settings: root " + juce::String(noteName(options_.root)) +

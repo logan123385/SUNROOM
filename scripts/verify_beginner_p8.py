@@ -8,6 +8,8 @@ import subprocess
 import sys
 import time
 
+from sunroom_paths import ai_config
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 cli = pathlib.Path(
     sys.argv[1]
@@ -16,7 +18,7 @@ cli = pathlib.Path(
 ).resolve()
 qa = ROOT / "artifacts/beginner-p8"
 qa.mkdir(parents=True, exist_ok=True)
-home_ai = pathlib.Path.home() / "Library" / "SUNROOM" / "sunroom-ai.json"
+home_ai = ai_config()
 records = []
 
 

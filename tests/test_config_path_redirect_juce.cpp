@@ -19,7 +19,7 @@ class ConfigPathRedirectTest final : public juce::UnitTest {
             const auto configFile = magda::paths::configFile();
             const auto real =
                 juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
-                    .getChildFile("MAGDA")
+                    .getChildFile("SUNROOM")
                     .getChildFile("config.json");
 
             expect(configFile != real,

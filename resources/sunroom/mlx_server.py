@@ -6,12 +6,14 @@ keeps memory bounded on the 16 GB target Mac. No cloud fallback.
 """
 from __future__ import annotations
 import argparse
+import ctypes
 import hmac
 import json
 import math
 import os
 from pathlib import Path
 import secrets
+import subprocess
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -19,6 +21,60 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
+
+def process_exists(pid: int) -> bool:
+    """True when pid is still running.
+
+    POSIX signal 0 only probes. On Windows, os.kill(pid, 0) calls
+    TerminateProcess, so a parent-liveness check must not use it.
+    """
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        process_query_limited_information = 0x1000
+        still_active = 259
+        handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+        if not handle:
+            # ERROR_ACCESS_DENIED: the process exists, but this token cannot open it.
+            return ctypes.get_last_error() == 5
+        try:
+            code = ctypes.c_ulong()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return False
+            return code.value == still_active
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def publish_private(path: Path, text: str) -> None:
+    """Write text so other users cannot read it. Unix mode 0600, Windows ACL."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(text, encoding="utf-8")
+    if os.name == "nt":
+        user = os.environ.get("USERNAME")
+        if user:
+            # Lock the temp file before it is published under the final name.
+            subprocess.run(
+                ["icacls", str(temporary), "/inheritance:r", "/grant:r", f"{user}:(R,W)"],
+                check=False,
+                capture_output=True,
+            )
+        os.replace(temporary, path)
+        return
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, path)
 
 
 def main():
@@ -121,22 +177,15 @@ def main():
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     server.daemon_threads = True
-    args.ready_file.parent.mkdir(parents=True, exist_ok=True)
     ready = {"port": server.server_address[1], "token": token, "pid": os.getpid()}
     # Publish atomically so consumers never read a truncated ready file.
-    tmp = args.ready_file.with_name(args.ready_file.name + ".tmp")
-    tmp.write_text(json.dumps(ready), encoding="utf-8")
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, args.ready_file)
+    publish_private(args.ready_file, json.dumps(ready))
 
     def maintenance():
         while True:
             time.sleep(5)
-            if args.parent_pid:
-                try:
-                    os.kill(args.parent_pid, 0)
-                except ProcessLookupError:
-                    os._exit(0)
+            if args.parent_pid and not process_exists(args.parent_pid):
+                os._exit(0)
             if time.monotonic() - state["used"] > 180 and lock.acquire(blocking=False):
                 try:
                     if state["model"] is not None:

@@ -109,7 +109,7 @@ juce::File dataDir() {
         return juce::File(fromEnv);
 
     const auto osDefault = juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
-                               .getChildFile("MAGDA");
+                               .getChildFile("SUNROOM");
 
     if (const auto config = osDefault.getChildFile("config.json"); config.existsAsFile()) {
         juce::var parsed;

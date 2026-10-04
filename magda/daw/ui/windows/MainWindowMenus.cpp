@@ -933,8 +933,19 @@ void MainWindow::setupMenuCallbacks() {
     // Help menu callbacks
     callbacks.onShowHelp = []() {
         // TODO: Implement help
-        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, "Help",
-                                               "SUNROOM: choose a feeling on Create, then Build my journey and Play. Note garden shows which notes belong to your chosen scale; Shift-click a second note to hear the pair. Plant squares to make a melody. Sound shelf adds free instruments or WAVs. Full studio gives you the timeline, piano roll, mixer and effects. Cmd-Z undoes an edit. Save project keeps an editable song; Export audio makes a mix you can share. The AI companion can explain a next step or suggest a recipe.");
+        juce::AlertWindow::showMessageBoxAsync(
+            juce::AlertWindow::InfoIcon, "Help",
+            "SUNROOM: choose a feeling on Create, then Build my journey and Play. Note garden shows "
+            "which notes belong to your chosen scale; Shift-click a second note to hear the pair. "
+            "Plant squares to make a melody. Sound shelf adds free instruments or WAVs. Full studio "
+            "gives you the timeline, piano roll, mixer and effects. "
+#if JUCE_MAC
+            "Cmd-Z"
+#else
+            "Ctrl+Z"
+#endif
+            " undoes an edit. Save project keeps an editable song; Export audio makes a mix you can "
+            "share. The AI companion can explain a next step or suggest a recipe.");
     };
 
     callbacks.onOpenManual = []() {

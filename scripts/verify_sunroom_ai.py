@@ -13,8 +13,11 @@ import tempfile
 import time
 import urllib.request
 
+from sunroom_paths import ai_config
+
 ROOT = Path(__file__).resolve().parents[1]
-config = json.loads((Path.home() / "Library/SUNROOM/sunroom-ai.json").read_text())
+
+config = json.loads(ai_config().read_text())
 guide = (ROOT / "resources/sunroom/knowledge/coach.md").read_text()
 context = """Create-page settings: root D, mode Dorian, 84 BPM, 32 bars.
 Scale notes: D E F G A B C. Quarter=714.3 ms; dotted eighth=535.7 ms.

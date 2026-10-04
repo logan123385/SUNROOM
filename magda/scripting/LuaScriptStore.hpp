@@ -7,14 +7,14 @@
 namespace magda::scripting {
 
 /**
- * Enumerates Lua scripts stored under the per-user MAGDA app data directory.
+ * Enumerates Lua scripts stored under the per-user SUNROOM app data directory.
  *
  * Default layout:
- *   ~/Library/MAGDA/Scripts/Controllers/      (macOS — JUCE's
+ *   ~/Library/SUNROOM/Scripts/Controllers/    (macOS — JUCE's
  *                                              userApplicationDataDirectory
  *                                              is ~/Library on macOS)
- *   %APPDATA%/MAGDA/Scripts/Controllers/      (Windows)
- *   ~/.config/MAGDA/Scripts/Controllers/      (Linux)
+ *   %APPDATA%/SUNROOM/Scripts/Controllers/    (Windows)
+ *   ~/.config/SUNROOM/Scripts/Controllers/    (Linux)
  *
  * Per-project storage is deferred to a follow-up; v1 is global only.
  *

@@ -422,8 +422,8 @@ class McpPage : public TransportPage {
         // Unbundled, as a console or test build produces.
         return appBundle.getParentDirectory().getChildFile("magda-mcp");
 #elif JUCE_WINDOWS
-        // Installed under %ProgramData%, deliberately not beside MAGDA.exe. The
-        // default install path is C:\Program Files\MAGDA, and an MCP host that
+        // Installed under %ProgramData%, deliberately not beside SUNROOM.exe. The
+        // default install path is C:\Program Files\SUNROOM, and an MCP host that
         // splits its configured command on whitespace rather than taking an argv
         // array turns that space into two broken arguments. %ProgramData% is a
         // fixed name on every supported Windows and carries no user name, so it
@@ -451,10 +451,10 @@ class McpPage : public TransportPage {
 
 #if JUCE_WINDOWS
     /// Where the installer puts the bridge: `commonApplicationDataDirectory` is
-    /// %ProgramData%, and `magda-installer.nsi` writes `MAGDA\bin` under it.
+    /// %ProgramData%, and `magda-installer.nsi` writes `SUNROOM\bin` under it.
     static juce::File commonDataBridge() {
         return juce::File::getSpecialLocation(juce::File::commonApplicationDataDirectory)
-            .getChildFile("MAGDA")
+            .getChildFile("SUNROOM")
             .getChildFile("bin")
             .getChildFile("magda-mcp.exe");
     }

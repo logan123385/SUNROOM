@@ -1172,7 +1172,15 @@ class AISettingsDialog::ConfigPage : public juce::Component {
                     opts.emplace_back(pid, juce::String(info->displayName));
         }
         opts.emplace_back(magda::provider::LLAMA_LOCAL, juce::String("Local"));
-        opts.emplace_back(magda::provider::SUNROOM_LUNA, juce::String("SUNROOM Luna / Keychain"));
+        opts.emplace_back(magda::provider::SUNROOM_LUNA,
+#if JUCE_WINDOWS
+                          juce::String("SUNROOM Luna / Credential Manager")
+#elif JUCE_MAC
+                          juce::String("SUNROOM Luna / Keychain")
+#else
+                          juce::String("SUNROOM Luna")
+#endif
+        );
         return opts;
     }
 

@@ -807,16 +807,16 @@ jobs:
           Copy-Item -Recurse -Force "third_party\eurorack\build\lib" "${{ steps.dsp-prebuilt.outputs.mutable_dir }}\"
         }
 
-    - name: Locate MAGDA.exe
+    - name: Locate SUNROOM.exe
       id: locate
       shell: powershell
       run: |
-        $exe = Get-ChildItem -Path build -Recurse -Filter "MAGDA.exe" | Select-Object -First 1
+        $exe = Get-ChildItem -Path build -Recurse -Filter "SUNROOM.exe" | Select-Object -First 1
         if ($exe) {
           Write-Output "Found: $($exe.FullName)"
           echo "exe_path=$($exe.FullName)" >> $env:GITHUB_OUTPUT
         } else {
-          Write-Error "MAGDA.exe not found"
+          Write-Error "SUNROOM.exe not found"
           exit 1
         }
 
@@ -825,13 +825,13 @@ jobs:
       env:
         VERSION: ${{ steps.version.outputs.version }}
       run: |
-        $pdb = Get-ChildItem -Path build -Recurse -Filter "MAGDA.pdb" | Select-Object -First 1
+        $pdb = Get-ChildItem -Path build -Recurse -Filter "SUNROOM.pdb" | Select-Object -First 1
         if ($pdb) {
-          $pdbName = "MAGDA-$env:VERSION-Windows-x86_64.pdb"
+          $pdbName = "SUNROOM-$env:VERSION-Windows-x86_64.pdb"
           Copy-Item $pdb.FullName $pdbName
           Write-Output "Staged PDB: $pdbName"
         } else {
-          Write-Warning "MAGDA.pdb not found - crash symbolization unavailable for this release"
+          Write-Warning "SUNROOM.pdb not found - crash symbolization unavailable for this release"
         }
 
     - name: Stage, sign, and build installer
@@ -849,7 +849,8 @@ jobs:
 
         Copy-Item "packaging\windows\magda-installer.nsi" "$stage\"
         Copy-Item "assets\mgd_doc_icon.ico" "$stage\"
-        Copy-Item "${{ steps.locate.outputs.exe_path }}" "$stage\MAGDA.exe"
+        Copy-Item "assets\sunroom_icon.ico" "$stage\"
+        Copy-Item "${{ steps.locate.outputs.exe_path }}" "$stage\SUNROOM.exe"
 
         # MAGDA and ONNX Runtime dynamically link the Microsoft Visual C++
         # runtime (MSVCP140/VCRUNTIME140/VCOMP140). Developer machines usually
@@ -901,7 +902,7 @@ jobs:
           exit 1
         }
 
-        # Runtime DLLs sitting next to MAGDA.exe: the ONNX Runtime DLLs (media DB
+        # Runtime DLLs sitting next to SUNROOM.exe: the ONNX Runtime DLLs (media DB
         # sample tagger) and libxml2.dll + its transitive deps (DAWproject XSD
         # validation), all placed there by the build's POST_BUILD steps. Windows
         # only resolves DLLs from the exe's own directory, so every one must ship
@@ -911,7 +912,7 @@ jobs:
         $dlls = Get-ChildItem -Path $exeDir -Filter *.dll -File
         foreach ($required in @("onnxruntime.dll", "onnxruntime_providers_shared.dll", "libxml2.dll")) {
           if (-not ($dlls | Where-Object { $_.Name -ieq $required })) {
-            Write-Error "$required missing next to MAGDA.exe at $exeDir"
+            Write-Error "$required missing next to SUNROOM.exe at $exeDir"
             exit 1
           }
         }
@@ -931,13 +932,13 @@ jobs:
         }
 
         # Controller profiles + Lua scripts. POST_BUILD already places
-        # controllers/ next to MAGDA.exe; mirror that exact layout into
+        # controllers/ next to SUNROOM.exe; mirror that exact layout into
         # staging so runtime probes (<exe>/controllers/{profiles,scripts})
         # find them after install.
         $controllersSrc = Join-Path $exeDir "controllers"
         $controllersDst = Join-Path $stage "controllers"
         if (-not (Test-Path $controllersSrc)) {
-          Write-Error "controllers/ missing next to MAGDA.exe at $controllersSrc"
+          Write-Error "controllers/ missing next to SUNROOM.exe at $controllersSrc"
           exit 1
         }
         New-Item -ItemType Directory -Path $controllersDst -ErrorAction Stop | Out-Null
@@ -954,7 +955,7 @@ jobs:
         }
 
         # Faust standard libraries, stock drumkits, and DAWproject XSD schemas.
-        # POST_BUILD places all three next to MAGDA.exe; the app loads them from
+        # POST_BUILD places all three next to SUNROOM.exe; the app loads them from
         # the exe's own directory (libfaust -I path, DrumkitManager seed,
         # DawProjectValidator <exe>/dawproject/*.xsd), so mirror them into
         # staging. Without dawproject/ the validator falls back to the baked-in
@@ -962,12 +963,22 @@ jobs:
         foreach ($dir in @("faustlibraries", "faust_dsp", "drumkits", "dawproject", "models")) {
           $src = Join-Path $exeDir $dir
           if (-not (Test-Path $src)) {
-            Write-Error "$dir/ missing next to MAGDA.exe at $src"
+            Write-Error "$dir/ missing next to SUNROOM.exe at $src"
             exit 1
           }
           Copy-Item -Recurse $src "$stage\$dir"
           Write-Output "Staged $dir/ for installer"
         }
+
+        # Guided studio resources. POST_BUILD copies resources/sunroom next to
+        # SUNROOM.exe as Sunroom/. The installer looks for that folder by name.
+        $sunroomSrc = Join-Path $exeDir "Sunroom"
+        if (-not (Test-Path "$sunroomSrc\knowledge\coach.md") -or -not (Test-Path "$sunroomSrc\Sounds\manifest.json")) {
+          Write-Error "Sunroom resources missing next to SUNROOM.exe at $sunroomSrc"
+          exit 1
+        }
+        Copy-Item -Recurse $sunroomSrc "$stage\Sunroom"
+        Write-Output "Staged Sunroom/ for installer"
 
         # Sign the two exes, build the installer from them, sign the installer,
         # verify the chain, then write the renamed signed installer + .sha256
@@ -982,7 +993,7 @@ jobs:
           -WaitMinutes 30
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-        $installerName = "MAGDA-$env:VERSION-Windows-x86_64-Setup.exe"
+        $installerName = "SUNROOM-$env:VERSION-Windows-x86_64-Setup.exe"
         Move-Item "$stage\$installerName" $installerName -Force
         Move-Item "$stage\$installerName.sha256" "$installerName.sha256" -Force
         Write-Output "Signed installer: $installerName"
@@ -993,9 +1004,9 @@ jobs:
       with:
         name: windows-x86_64-release
         path: |
-          MAGDA-*-Windows-x86_64-Setup.exe
-          MAGDA-*-Windows-x86_64-Setup.exe.sha256
-          MAGDA-*-Windows-x86_64.pdb
+          SUNROOM-*-Windows-x86_64-Setup.exe
+          SUNROOM-*-Windows-x86_64-Setup.exe.sha256
+          SUNROOM-*-Windows-x86_64.pdb
 
     - name: Clean up
       if: always()
@@ -1324,9 +1335,9 @@ jobs:
         files: |
           macos-release/MAGDA-*-macOS-arm64.dmg
           macos-release/MAGDA-*-macOS-arm64.dmg.sha256
-          windows-x86_64-release/MAGDA-*-Windows-x86_64-Setup.exe
-          windows-x86_64-release/MAGDA-*-Windows-x86_64-Setup.exe.sha256
-          windows-x86_64-release/MAGDA-*-Windows-x86_64.pdb
+          windows-x86_64-release/SUNROOM-*-Windows-x86_64-Setup.exe
+          windows-x86_64-release/SUNROOM-*-Windows-x86_64-Setup.exe.sha256
+          windows-x86_64-release/SUNROOM-*-Windows-x86_64.pdb
           linux-release/*
 
     - name: Create GitHub Release
@@ -1345,7 +1356,7 @@ jobs:
           macos-release/MAGDA-*-macOS-arm64.dmg.sha256
           macos-x86_64-release/MAGDA-*-macOS-x86_64.dmg
           macos-x86_64-release/MAGDA-*-macOS-x86_64.dmg.sha256
-          windows-x86_64-release/MAGDA-*-Windows-x86_64-Setup.exe
-          windows-x86_64-release/MAGDA-*-Windows-x86_64-Setup.exe.sha256
-          windows-x86_64-release/MAGDA-*-Windows-x86_64.pdb
+          windows-x86_64-release/SUNROOM-*-Windows-x86_64-Setup.exe
+          windows-x86_64-release/SUNROOM-*-Windows-x86_64-Setup.exe.sha256
+          windows-x86_64-release/SUNROOM-*-Windows-x86_64.pdb
           linux-release/*
